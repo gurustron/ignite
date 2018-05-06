@@ -206,6 +206,24 @@ namespace Apache.Ignite.Core.Impl.Client.Cache
         }
 
         /** <inheritDoc /> */
+        public Task<IAsyncQueryCursor<ICacheEntry<TK, TV>>> QueryAsync(ScanQuery<TK, TV> scanQuery)
+        {
+            IgniteArgumentCheck.NotNull(scanQuery, "scanQuery");
+            throw new NotImplementedException();
+            // Filter is a binary object for all platforms.
+            // For .NET it is a CacheEntryFilterHolder with a predefined id (BinaryTypeId.CacheEntryPredicateHolder).
+
+
+            //return DoOutInOpAsync(ClientOp.QueryScan, w => WriteScanQuery(w, scanQuery),
+            //    s => new ClientQueryCursor<TK, TV>(
+            //        _ignite,
+            //        s.ReadLong(),
+            //        _keepBinary,
+            //        s,
+            //        ClientOp.QueryScanCursorGetPage) as IQueryCursor<ICacheEntry<TK, TV>>);
+        }
+
+        /** <inheritDoc /> */
         public IQueryCursor<ICacheEntry<TK, TV>> Query(SqlQuery sqlQuery)
         {
             IgniteArgumentCheck.NotNull(sqlQuery, "sqlQuery");
