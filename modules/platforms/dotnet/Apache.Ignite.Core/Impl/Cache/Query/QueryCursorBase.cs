@@ -85,13 +85,7 @@ namespace Apache.Ignite.Core.Impl.Cache.Query
         /** <inheritdoc /> */
         public IList<T> GetAll()
         {
-            if (_getAllCalled)
-                throw new InvalidOperationException("Failed to get all entries because GetAll() " +
-                                                    "method has already been called.");
-
-            if (_iterCalled)
-                throw new InvalidOperationException("Failed to get all entries because GetEnumerator() " +
-                                                    "method has already been called.");
+            ValidateNotEnumerated("Failed to get all entries");
 
             ThrowIfDisposed();
 
@@ -108,17 +102,7 @@ namespace Apache.Ignite.Core.Impl.Cache.Query
         /** <inheritdoc /> */
         public IEnumerator<T> GetEnumerator()
         {
-            if (_getAllCalled)
-            {
-                throw new InvalidOperationException("Failed to get enumerator entries because " +
-                                                    "GetAll() method has already been called.");
-            }
-
-            if (_iterCalled)
-            {
-                throw new InvalidOperationException("Failed to get enumerator entries because " +
-                                                    "GetEnumerator() method has already been called.");
-            }
+            ValidateNotEnumerated("Failed to get enumerator entries");
 
             ThrowIfDisposed();
 
@@ -303,6 +287,25 @@ namespace Apache.Ignite.Core.Impl.Cache.Query
             if (_disposed)
             {
                 throw new ObjectDisposedException(GetType().Name, "Object has been disposed.");
+            }
+        }
+
+        /// <summary>
+        /// Throws error if any method resulting in enumeration was called
+        /// </summary>
+        /// <param name="failureMessageStart"></param>
+        protected void ValidateNotEnumerated(string failureMessageStart)
+        {
+            if (_getAllCalled)
+            {
+                throw new InvalidOperationException(failureMessageStart +
+                                                    " because GetAll() method has already been called.");
+            }
+
+            if (_iterCalled)
+            {
+                throw new InvalidOperationException(failureMessageStart +
+                                                    " because GetEnumerator() method has already been called.");
             }
         }
     }

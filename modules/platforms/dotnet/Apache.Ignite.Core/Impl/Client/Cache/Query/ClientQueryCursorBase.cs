@@ -19,6 +19,8 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Threading.Tasks;
+    using Apache.Ignite.Core.Cache.Query;
     using Apache.Ignite.Core.Impl.Binary;
     using Apache.Ignite.Core.Impl.Binary.IO;
     using Apache.Ignite.Core.Impl.Cache.Query;
@@ -26,7 +28,7 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
     /// <summary>
     /// Client query cursor base.
     /// </summary>
-    internal class ClientQueryCursorBase<T> : QueryCursorBase<T>
+    internal class ClientQueryCursorBase<T> : QueryCursorBase<T>, IAsyncQueryCursor<T>
     {
         /** Ignite. */
         private readonly IgniteClient _ignite;
@@ -53,6 +55,12 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
             _ignite = ignite;
             _cursorId = cursorId;
             _getPageOp = getPageOp;
+        }
+
+        /** <inheritdoc /> */
+        public Task<IList<T>> GetAllAsync()
+        {
+            throw new NotImplementedException();
         }
 
         /** <inheritdoc /> */
