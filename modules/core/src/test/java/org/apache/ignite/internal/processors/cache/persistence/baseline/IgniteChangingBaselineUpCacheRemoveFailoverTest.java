@@ -37,6 +37,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheAbstractRemoveFailur
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 
@@ -70,9 +71,9 @@ public class IgniteChangingBaselineUpCacheRemoveFailoverTest extends GridCacheAb
             new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(new DataRegionConfiguration()
                     .setPersistenceEnabled(true)
-                    .setInitialSize(200 * 1024 * 1024)
-                    .setMaxSize(200 * 1024 * 1024)
-                    .setCheckpointPageBufferSize(200 * 1024 * 1024)
+                    .setInitialSize(200L * 1024 * 1024)
+                    .setMaxSize(200L * 1024 * 1024)
+                    .setCheckpointPageBufferSize(200L * 1024 * 1024)
                 )
         );
 
@@ -81,6 +82,8 @@ public class IgniteChangingBaselineUpCacheRemoveFailoverTest extends GridCacheAb
 
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
+        System.setProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED, "false");
+
         cleanPersistenceDir();
     }
 
@@ -97,9 +100,9 @@ public class IgniteChangingBaselineUpCacheRemoveFailoverTest extends GridCacheAb
 
     /** {@inheritDoc} */
     @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
         cleanPersistenceDir();
+
+        System.clearProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED);
     }
 
     /** {@inheritDoc} */

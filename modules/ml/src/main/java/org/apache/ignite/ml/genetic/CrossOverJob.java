@@ -19,17 +19,15 @@ package org.apache.ignite.ml.genetic;
 
 import java.util.Arrays;
 import java.util.Random;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.compute.ComputeJobAdapter;
+import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.resources.LoggerResource;
 import org.apache.ignite.transactions.Transaction;
-
-import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 
 /**
  * Responsible for performing 'crossover' genetic operation for 2 X 'parent' chromosomes.
@@ -50,11 +48,11 @@ import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 public class CrossOverJob extends ComputeJobAdapter {
     /** Ignite resource */
     @IgniteInstanceResource
-    private Ignite ignite = null;
+    private Ignite ignite;
 
     /** Ignite logger */
     @LoggerResource
-    private IgniteLogger log = null;
+    private IgniteLogger log;
 
     /** primary key of 1st chromosome */
     private Long key1;
@@ -79,26 +77,24 @@ public class CrossOverJob extends ComputeJobAdapter {
     /**
      * helper routine to assist cross over
      *
-     * @param newKeySwapArrayForChrome New gene keys to copy starting at updateIdx
+     * @param newKeySwapArrForChrome New gene keys to copy starting at updateIdx
      * @param updateIdx Update Index
      * @param genekeys Original gene Keys for a chromosome
      * @return New Gene keys
      */
-    private long[] crossOver(long[] newKeySwapArrayForChrome, int updateIdx, long[] genekeys) {
+    private long[] crossOver(long[] newKeySwapArrForChrome, int updateIdx, long[] genekeys) {
         long[] newGeneKeys = genekeys.clone();
 
         int k = 0;
         for (int x = updateIdx; x < newGeneKeys.length; x++) {
-            newGeneKeys[x] = newKeySwapArrayForChrome[k];
-            k = k + 1;
+            newGeneKeys[x] = newKeySwapArrForChrome[k];
+            k += 1;
         }
         return newGeneKeys;
     }
 
-    /**
-     * Perform crossover operation
-     */
-    public Object execute() throws IgniteException {
+    /** {@inheritDoc} */
+    @Override public Object execute() throws IgniteException {
 
         if (this.crossOverRate > Math.random()) {
 
@@ -115,15 +111,15 @@ public class CrossOverJob extends ComputeJobAdapter {
             Random rn = new Random();
 
             // compute index to start for copying respective genes
-            int geneIndexStartSwap = rn.nextInt(genesforChrom1.length);
+            int geneIdxStartSwap = rn.nextInt(genesforChrom1.length);
 
-            long[] newKeySwapArrayForChrome1 =
-                Arrays.copyOfRange(genesforChrom2, geneIndexStartSwap, genesforChrom1.length);
-            long[] newKeySwapArrayForChrome2 =
-                Arrays.copyOfRange(genesforChrom1, geneIndexStartSwap, genesforChrom1.length);
+            long[] newKeySwapArrForChrome1 =
+                Arrays.copyOfRange(genesforChrom2, geneIdxStartSwap, genesforChrom1.length);
+            long[] newKeySwapArrForChrome2 =
+                Arrays.copyOfRange(genesforChrom1, geneIdxStartSwap, genesforChrom1.length);
 
-            long[] newGeneKeysForChrom1 = crossOver(newKeySwapArrayForChrome1, geneIndexStartSwap, genesforChrom1);
-            long[] newGeneKeysForChrom2 = crossOver(newKeySwapArrayForChrome2, geneIndexStartSwap, genesforChrom2);
+            long[] newGeneKeysForChrom1 = crossOver(newKeySwapArrForChrome1, geneIdxStartSwap, genesforChrom1);
+            long[] newGeneKeysForChrom2 = crossOver(newKeySwapArrForChrome2, geneIdxStartSwap, genesforChrom2);
 
             chromosome1.setGenes(newGeneKeysForChrom1);
             populationCache.put(chromosome1.id(), chromosome1);

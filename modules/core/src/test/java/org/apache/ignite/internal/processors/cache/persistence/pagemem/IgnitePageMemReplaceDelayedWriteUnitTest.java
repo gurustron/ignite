@@ -31,21 +31,35 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
+import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.mem.DirectMemoryProvider;
 import org.apache.ignite.internal.mem.unsafe.UnsafeMemoryProvider;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.persistence.CheckpointWriteProgressSupplier;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegionMetricsImpl;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager;
+import org.apache.ignite.internal.processors.cache.persistence.PageStoreWriter;
+import org.apache.ignite.internal.processors.metric.GridMetricManager;
+import org.apache.ignite.internal.processors.subscription.GridInternalSubscriptionProcessor;
 import org.apache.ignite.internal.util.GridMultiCollectionWrapper;
+import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.logger.NullLogger;
+import org.apache.ignite.spi.encryption.noop.NoopEncryptionSpi;
+import org.apache.ignite.spi.metric.noop.NoopMetricExporterSpi;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
 import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
+import static org.apache.ignite.internal.processors.database.DataRegionMetricsSelfTest.NO_OP_METRICS;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -54,6 +68,10 @@ import static org.mockito.Mockito.when;
  * Unit test for delayed page replacement mode.
  */
 public class IgnitePageMemReplaceDelayedWriteUnitTest {
+    /** Per test timeout */
+    @Rule
+    public Timeout globalTimeout = new Timeout((int) GridTestUtils.DFLT_TEST_TIMEOUT);
+
     /** CPU count. */
     private static final int CPUS = 32;
 
@@ -76,7 +94,7 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
 
         AtomicInteger totalEvicted = new AtomicInteger();
 
-        ReplacedPageWriter pageWriter = (FullPageId fullPageId, ByteBuffer byteBuf, int tag) -> {
+        PageStoreWriter pageWriter = (FullPageId fullPageId, ByteBuffer byteBuf, int tag) -> {
             log.info("Evicting " + fullPageId);
 
             assert getLockedPages(fullPageId).contains(fullPageId);
@@ -100,7 +118,7 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
             memory.releasePage(1, pageId, ptr);
         }
 
-        GridMultiCollectionWrapper<FullPageId> ids = memory.beginCheckpoint();
+        GridMultiCollectionWrapper<FullPageId> ids = memory.beginCheckpoint(new GridFinishedFuture());
         int cpPages = ids.size();
         log.info("Started CP with [" + cpPages + "] pages in it, created [" + markDirty + "] pages");
 
@@ -120,7 +138,7 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
 
         assert totalEvicted.get() > 0;
 
-        memory.stop();
+        memory.stop(true);
     }
 
     /**
@@ -133,7 +151,7 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
 
         AtomicInteger totalEvicted = new AtomicInteger();
 
-        ReplacedPageWriter pageWriter = (FullPageId fullPageId, ByteBuffer byteBuf, int tag) -> {
+        PageStoreWriter pageWriter = (FullPageId fullPageId, ByteBuffer byteBuf, int tag) -> {
             log.info("Evicting " + fullPageId);
 
             assert getSegment(fullPageId).writeLock().isHeldByCurrentThread();
@@ -163,7 +181,7 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
             memory.releasePage(1, pageId, ptr);
         }
 
-        GridMultiCollectionWrapper<FullPageId> ids = memory.beginCheckpoint();
+        GridMultiCollectionWrapper<FullPageId> ids = memory.beginCheckpoint(new GridFinishedFuture());
         int cpPages = ids.size();
         log.info("Started CP with [" + cpPages + "] pages in it, created [" + markDirty + "] pages");
 
@@ -175,14 +193,14 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
 
         assert totalEvicted.get() > 0;
 
-        memory.stop();
+        memory.stop(true);
     }
 
     /**
      * @param fullPageId page ID to determine segment for
      * @return segment related
      */
-    @SuppressWarnings("TypeMayBeWeakened") private ReentrantReadWriteLock getSegment(FullPageId fullPageId) {
+    private ReentrantReadWriteLock getSegment(FullPageId fullPageId) {
         ReentrantReadWriteLock[] segments = U.field(pageMemory, "segments");
 
         int idx = PageMemoryImpl.segmentIndex(fullPageId.groupId(), fullPageId.pageId(),
@@ -198,13 +216,14 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
      * @return implementation for test
      */
     @NotNull
-    private PageMemoryImpl createPageMemory(IgniteConfiguration cfg, ReplacedPageWriter pageWriter, int pageSize) {
+    private PageMemoryImpl createPageMemory(IgniteConfiguration cfg, PageStoreWriter pageWriter, int pageSize) {
         IgniteCacheDatabaseSharedManager db = mock(GridCacheDatabaseSharedManager.class);
 
         when(db.checkpointLockIsHeldByThread()).thenReturn(true);
 
         GridCacheSharedContext sctx = Mockito.mock(GridCacheSharedContext.class);
 
+        when(sctx.gridConfig()).thenReturn(cfg);
         when(sctx.pageStore()).thenReturn(new NoOpPageStoreManager());
         when(sctx.wal()).thenReturn(new NoOpWALManager());
         when(sctx.database()).thenReturn(db);
@@ -213,18 +232,36 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
         GridKernalContext kernalCtx = mock(GridKernalContext.class);
 
         when(kernalCtx.config()).thenReturn(cfg);
+        when(kernalCtx.log(any(Class.class))).thenReturn(log);
+        when(kernalCtx.internalSubscriptionProcessor()).thenAnswer(new Answer<Object>() {
+            @Override public Object answer(InvocationOnMock mock) throws Throwable {
+                return new GridInternalSubscriptionProcessor(kernalCtx);
+            }
+        });
+        when(kernalCtx.encryption()).thenAnswer(new Answer<Object>() {
+            @Override public Object answer(InvocationOnMock mock) throws Throwable {
+                return new GridEncryptionManager(kernalCtx);
+            }
+        });
+        when(kernalCtx.metric()).thenAnswer(new Answer<Object>() {
+            @Override public Object answer(InvocationOnMock mock) throws Throwable {
+                return new GridMetricManager(kernalCtx);
+            }
+        });
+
         when(sctx.kernalContext()).thenReturn(kernalCtx);
 
         DataRegionConfiguration regCfg = cfg.getDataStorageConfiguration().getDefaultDataRegionConfiguration();
 
-        DataRegionMetricsImpl memMetrics = new DataRegionMetricsImpl(regCfg);
+        DataRegionMetricsImpl memMetrics = new DataRegionMetricsImpl(regCfg, kernalCtx.metric(), NO_OP_METRICS);
 
         long[] sizes = prepareSegmentSizes(regCfg.getMaxSize());
 
         DirectMemoryProvider provider = new UnsafeMemoryProvider(log);
 
         PageMemoryImpl memory = new PageMemoryImpl(provider, sizes, sctx, pageSize,
-            pageWriter, null, () -> true, memMetrics, PageMemoryImpl.ThrottlingPolicy.DISABLED, null);
+            pageWriter, null, () -> true, memMetrics, PageMemoryImpl.ThrottlingPolicy.DISABLED,
+            mock(CheckpointWriteProgressSupplier.class));
 
         memory.start();
         return memory;
@@ -236,6 +273,9 @@ public class IgnitePageMemReplaceDelayedWriteUnitTest {
      */
     @NotNull private IgniteConfiguration getConfiguration(long overallSize) {
         IgniteConfiguration cfg = new IgniteConfiguration();
+
+        cfg.setEncryptionSpi(new NoopEncryptionSpi());
+        cfg.setMetricExporterSpi(new NoopMetricExporterSpi());
 
         cfg.setDataStorageConfiguration(
             new DataStorageConfiguration()

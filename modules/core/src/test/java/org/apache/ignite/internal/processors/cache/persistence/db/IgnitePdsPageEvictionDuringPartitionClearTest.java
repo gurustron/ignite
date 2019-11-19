@@ -35,6 +35,7 @@ import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabase
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  *
@@ -59,7 +60,7 @@ public class IgnitePdsPageEvictionDuringPartitionClearTest extends GridCommonAbs
         // Intentionally set small page cache size.
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
-                new DataRegionConfiguration().setMaxSize(70 * 1024 * 1024).setPersistenceEnabled(true))
+                new DataRegionConfiguration().setMaxSize(70L * 1024 * 1024).setPersistenceEnabled(true))
             .setWalMode(WALMode.LOG_ONLY);
 
         cfg.setDataStorageConfiguration(memCfg);
@@ -85,6 +86,7 @@ public class IgnitePdsPageEvictionDuringPartitionClearTest extends GridCommonAbs
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testPageEvictionOnNodeStart() throws Exception {
         for (int r = 0; r < 3; r++) {
             cleanPersistenceDir();

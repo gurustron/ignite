@@ -20,7 +20,6 @@ package org.apache.ignite.ml.genetic;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.affinity.Affinity;
@@ -29,10 +28,10 @@ import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.compute.ComputeJobResultPolicy;
 import org.apache.ignite.compute.ComputeTaskAdapter;
-import org.apache.ignite.resources.IgniteInstanceResource;
-
 import org.apache.ignite.ml.genetic.parameter.GAConfiguration;
 import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
+import org.apache.ignite.resources.IgniteInstanceResource;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Responsible for fitness operation
@@ -40,24 +39,20 @@ import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 public class FitnessTask extends ComputeTaskAdapter<List<Long>, Boolean> {
     /** Ignite instance */
     @IgniteInstanceResource
-    private Ignite ignite = null;
+    private Ignite ignite;
 
     /** GAConfiguration */
-    private GAConfiguration config = null;
+    private GAConfiguration cfg;
 
     /**
-     * @param config GAConfiguration
+     * @param cfg GAConfiguration
      */
-    public FitnessTask(GAConfiguration config) {
-        this.config = config;
+    public FitnessTask(GAConfiguration cfg) {
+        this.cfg = cfg;
     }
 
-    /**
-     * @param nodes List of ClusterNode
-     * @param chromosomeKeys List of chromosome keys
-     * @return Map of jobs to nodes
-     */
-    public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
+    /** {@inheritDoc} */
+    @NotNull @Override public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
 
         Map<ComputeJob, ClusterNode> map = new HashMap<>();
 
@@ -65,7 +60,7 @@ public class FitnessTask extends ComputeTaskAdapter<List<Long>, Boolean> {
 
         for (Long key : chromosomeKeys) {
 
-            FitnessJob ajob = new FitnessJob(key, this.config.getFitnessFunction());
+            FitnessJob ajob = new FitnessJob(key, this.cfg.getFitnessFunction());
 
             ClusterNode primary = affinity.mapKeyToNode(key);
 
@@ -74,21 +69,14 @@ public class FitnessTask extends ComputeTaskAdapter<List<Long>, Boolean> {
         return map;
     }
 
-    /**
-     * @param list List of ComputeJobResult
-     * @return Boolean value
-     */
-    public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
+    /** {@inheritDoc} */
+    @Override public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
 
         return Boolean.TRUE;
     }
 
-    /**
-     * @param res ComputeJobResult
-     * @param rcvd List of ComputeJobResult
-     * @return ComputeJobResultPolicy
-     */
-    public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
+    /** {@inheritDoc} */
+    @Override public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
         IgniteException err = res.getException();
 
         if (err != null)

@@ -19,7 +19,6 @@ package org.apache.ignite.ml.genetic.parameter;
 
 import java.util.ArrayList;
 import java.util.List;
-
 import org.apache.ignite.ml.genetic.Gene;
 import org.apache.ignite.ml.genetic.IFitnessFunction;
 
@@ -40,10 +39,11 @@ import org.apache.ignite.ml.genetic.IFitnessFunction;
  */
 public class GAConfiguration {
     /** Selection method */
-    private GAGridConstants.SELECTION_METHOD selectionMethod = null;
+    private GAGridConstants.SELECTION_METHOD selectionMtd;
 
     /** Criteria used to describe a chromosome */
-    private ChromosomeCriteria chromosomeCriteria = null;
+    private ChromosomeCriteria chromosomeCriteria;
+
     /**
      * Percentage of most fit chromosomes to be maintained and utilized to copy into new population.
      *
@@ -52,6 +52,7 @@ public class GAConfiguration {
      * Accepted values between 0 and 1
      */
     private double truncateRate;
+
     /**
      * Elitism is the concept that the strongest members of the population will be preserved from generation to
      * generation. <br/>
@@ -60,13 +61,14 @@ public class GAConfiguration {
      *
      * NOTE: This parameter is only considered when selectionMethod is SELECTON_METHOD_ELETISM.
      */
-    private int elitismCount = 0;
+    private int elitismCnt;
 
     /**
      * Indicates how chromosome fitness values should be evaluated. </br> A chromosome with
      * isHigherFitnessValueFitter=true is considered fittest.
      */
-    private boolean isHigherFitnessValueFitter = true;
+    private boolean isHigherFitnessValFitter = true;
+
     /**
      * Population size represents the number of potential solutions (ie: chromosomes) between each generation Default
      * size is 500
@@ -79,7 +81,8 @@ public class GAConfiguration {
     private List<Gene> genePool = new ArrayList<Gene>();
 
     /** Number of genes within a chromosome */
-    private int chromosomeLength = 0;
+    private int chromosomeLen;
+
     /**
      * Crossover rate is the probability that two chromosomes will breed with each other. offspring with traits of each
      * of the parents.
@@ -87,6 +90,7 @@ public class GAConfiguration {
      * Accepted values are between 0 and 1
      */
     private double crossOverRate = .50;
+
     /**
      * Mutation rate is the probability that a chromosome will be mutated offspring with traits of each of the parents.
      *
@@ -94,20 +98,21 @@ public class GAConfiguration {
      * Accepted values are between 0 and 1
      */
     private double mutationRate = .50;
+
     /**
      * Call back interface used to terminate Genetic algorithm.
      *
      * Implement this interface based on particular use case.
      */
-    private ITerminateCriteria terminateCriteria = null;
+    private ITerminateCriteria terminateCriteria;
 
     /**
      * Represents a fitness function. Implement the IFitnessFunction to satisfy your particular use case.
      */
-    private IFitnessFunction fitnessFunction = null;
+    private IFitnessFunction fitnessFunction;
 
     public GAConfiguration() {
-        this.setSelectionMethod(GAGridConstants.SELECTION_METHOD.SELECTION_METHOD_TRUNCATION);
+        this.setSelectionMtd(GAGridConstants.SELECTION_METHOD.SELECTION_METHOD_TRUNCATION);
         this.setTruncateRate(.10);
     }
 
@@ -131,19 +136,10 @@ public class GAConfiguration {
     }
 
     /**
-     * set Boolean value indicating how fitness values should be evaluated
-     *
-     * @param isHigherFitnessValueFitter Boolean value indicating how fitness values should be evaluated
-     */
-    public void setIsHigherFitnessValueFitter(boolean isHigherFitnessValueFitter) {
-        this.isHigherFitnessValueFitter = isHigherFitnessValueFitter;
-    }
-
-    /**
      * @return Boolean value indicating how fitness values should be evaluated.
      */
-    public boolean isHigherFitnessValueFitter() {
-        return this.isHigherFitnessValueFitter;
+    public boolean isHigherFitnessValFitter() {
+        return this.isHigherFitnessValFitter;
     }
 
     /**
@@ -151,17 +147,17 @@ public class GAConfiguration {
      *
      * @return Size of Chromosome
      */
-    public int getChromosomeLength() {
-        return chromosomeLength;
+    public int getChromosomeLen() {
+        return chromosomeLen;
     }
 
     /**
      * Set the Chromsome length
      *
-     * @param chromosomeLength Size of Chromosome
+     * @param chromosomeLen Size of Chromosome
      */
-    public void setChromosomeLength(int chromosomeLength) {
-        this.chromosomeLength = chromosomeLength;
+    public void setChromosomeLen(int chromosomeLen) {
+        this.chromosomeLen = chromosomeLen;
     }
 
     /**
@@ -187,17 +183,17 @@ public class GAConfiguration {
      *
      * @return Elitism count
      */
-    public int getElitismCount() {
-        return elitismCount;
+    public int getElitismCnt() {
+        return elitismCnt;
     }
 
     /**
      * Set the elitism count.
      *
-     * @param elitismCount Elitism count
+     * @param elitismCnt Elitism count
      */
-    public void setElitismCount(int elitismCount) {
-        this.elitismCount = elitismCount;
+    public void setElitismCnt(int elitismCnt) {
+        this.elitismCnt = elitismCnt;
     }
 
     /**
@@ -281,17 +277,17 @@ public class GAConfiguration {
      *
      * @return Selection method
      */
-    public GAGridConstants.SELECTION_METHOD getSelectionMethod() {
-        return selectionMethod;
+    public GAGridConstants.SELECTION_METHOD getSelectionMtd() {
+        return selectionMtd;
     }
 
     /**
      * Set the selection method
      *
-     * @param selectionMethod Selection method
+     * @param selectionMtd Selection method
      */
-    public void setSelectionMethod(GAGridConstants.SELECTION_METHOD selectionMethod) {
-        this.selectionMethod = selectionMethod;
+    public void setSelectionMtd(GAGridConstants.SELECTION_METHOD selectionMtd) {
+        this.selectionMtd = selectionMtd;
     }
 
     /**

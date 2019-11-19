@@ -17,6 +17,7 @@
 
 /**
  * <!-- Package description. -->
- * Contains some utility structures.
+ * Contains some internal utility structures.
  */
+
 package org.apache.ignite.ml.structures;

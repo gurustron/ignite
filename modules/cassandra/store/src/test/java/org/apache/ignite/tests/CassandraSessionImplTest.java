@@ -33,6 +33,7 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.cache.store.cassandra.persistence.KeyValuePersistenceSettings;
 import org.apache.ignite.cache.store.cassandra.session.BatchExecutionAssistant;
 import org.apache.ignite.cache.store.cassandra.session.CassandraSessionImpl;
+import org.apache.ignite.cache.store.cassandra.session.WrappedPreparedStatement;
 import org.junit.Test;
 
 import com.datastax.driver.core.BoundStatement;
@@ -51,9 +52,11 @@ import com.datastax.driver.core.exceptions.InvalidQueryException;
 public class CassandraSessionImplTest {
 
     private PreparedStatement preparedStatement1 = mockPreparedStatement();
+
     private PreparedStatement preparedStatement2 = mockPreparedStatement();
 
     private MyBoundStatement1 boundStatement1 = new MyBoundStatement1(preparedStatement1);
+
     private MyBoundStatement2 boundStatement2 = new MyBoundStatement2(preparedStatement2);
 
     @SuppressWarnings("unchecked")
@@ -151,11 +154,16 @@ public class CassandraSessionImplTest {
 
         @Override
         public BoundStatement bindStatement(PreparedStatement statement, Object obj) {
+            if (statement instanceof WrappedPreparedStatement)
+                statement = ((WrappedPreparedStatement)statement).getWrappedStatement();
+
             if (statement == preparedStatement1) {
                 return boundStatement1;
-            } else if (statement == preparedStatement2) {
+            }
+            else if (statement == preparedStatement2) {
                 return boundStatement2;
             }
+
             throw new RuntimeException("unexpected");
         }
 

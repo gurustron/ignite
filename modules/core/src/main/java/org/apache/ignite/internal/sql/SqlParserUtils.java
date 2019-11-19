@@ -261,6 +261,26 @@ public class SqlParserUtils {
     }
 
     /**
+     * Skip token if it matches expected keyword by using lookahead.
+     * If next token is not what we expect, no shift is done.
+     *
+     * @param lex Lexer.
+     * @param expKeyword Expected keyword.
+     * @return {@code true} In case token mathes, {@code false} otherwise.
+     */
+    public static boolean skipIfMatchesOptionalKeyword(SqlLexer lex, String expKeyword) {
+        SqlLexerToken nextTok = lex.lookAhead();
+
+        if (matchesKeyword(nextTok, expKeyword)) {
+            lex.shift();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Skip next token if it matches expected type.
      *
      * @param lex Lexer.
@@ -338,7 +358,7 @@ public class SqlParserUtils {
      * @return Error.
      */
     public static SqlParseException errorUnsupported(SqlLexerToken token) {
-        throw error0(token, IgniteQueryErrorCode.UNSUPPORTED_OPERATION,
+        return error0(token, IgniteQueryErrorCode.UNSUPPORTED_OPERATION,
             "Unsupported keyword: \"" + token.token() + "\"");
     }
 

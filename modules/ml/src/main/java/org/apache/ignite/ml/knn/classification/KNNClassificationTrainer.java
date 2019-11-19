@@ -17,25 +17,25 @@
 
 package org.apache.ignite.ml.knn.classification;
 
-import org.apache.ignite.ml.dataset.DatasetBuilder;
-import org.apache.ignite.ml.knn.KNNUtils;
-import org.apache.ignite.ml.math.functions.IgniteBiFunction;
-import org.apache.ignite.ml.trainers.SingleLabelDatasetTrainer;
+import org.apache.ignite.ml.dataset.Dataset;
+import org.apache.ignite.ml.dataset.primitive.context.EmptyContext;
+import org.apache.ignite.ml.knn.KNNTrainer;
+import org.apache.ignite.ml.knn.utils.indices.SpatialIndex;
 
 /**
- * kNN algorithm trainer to solve multi-class classification task.
+ * KNN classification model trader that trains model on top of distribtued spatial indices. Be aware that this model is
+ * linked with cluster environment it's been built on and can't be saved or used in other places. Under the hood it
+ * keeps {@link Dataset} that consists of a set of resources allocated across the cluster.
  */
-public class KNNClassificationTrainer implements SingleLabelDatasetTrainer<KNNClassificationModel> {
-    /**
-     * Trains model based on the specified data.
-     *
-     * @param datasetBuilder Dataset builder.
-     * @param featureExtractor Feature extractor.
-     * @param lbExtractor Label extractor.
-     * @return Model.
-     */
-    @Override public <K, V> KNNClassificationModel fit(DatasetBuilder<K, V> datasetBuilder,
-        IgniteBiFunction<K, V, double[]> featureExtractor, IgniteBiFunction<K, V, Double> lbExtractor) {
-        return new KNNClassificationModel<>(KNNUtils.buildDataset(datasetBuilder, featureExtractor, lbExtractor));
+public class KNNClassificationTrainer extends KNNTrainer<KNNClassificationModel, KNNClassificationTrainer> {
+    /** {@inheritDoc} */
+    @Override protected KNNClassificationModel convertDatasetIntoModel(
+        Dataset<EmptyContext, SpatialIndex<Double>> dataset) {
+        return new KNNClassificationModel(dataset, distanceMeasure, k, weighted);
+    }
+
+    /** {@inheritDoc} */
+    @Override protected KNNClassificationTrainer self() {
+        return this;
     }
 }

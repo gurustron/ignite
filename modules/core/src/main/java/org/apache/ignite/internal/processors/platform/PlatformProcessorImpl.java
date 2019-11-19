@@ -57,6 +57,7 @@ import org.apache.ignite.internal.util.typedef.CI1;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.lang.IgniteProductVersion;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -71,11 +72,12 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static org.apache.ignite.internal.processors.platform.PlatformAbstractTarget.FALSE;
 import static org.apache.ignite.internal.processors.platform.PlatformAbstractTarget.TRUE;
+import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.DEFAULT_VER;
 
 /**
  * GridGain platform processor.
  */
-@SuppressWarnings({"ConditionalExpressionWithIdenticalBranches", "unchecked"})
+@SuppressWarnings({"unchecked"})
 public class PlatformProcessorImpl extends GridProcessorAdapter implements PlatformProcessor, PlatformTarget {
     /** */
     private static final int OP_GET_CACHE = 1;
@@ -163,6 +165,24 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
 
     /** */
     private static final int OP_IS_WAL_ENABLED = 29;
+
+    /** */
+    private static final int OP_SET_TX_TIMEOUT_ON_PME = 30;
+
+    /** */
+    private static final int OP_NODE_VERSION = 31;
+
+    /** */
+    private static final int OP_IS_BASELINE_AUTO_ADJ_ENABLED = 32;
+
+    /** */
+    private static final int OP_SET_BASELINE_AUTO_ADJ_ENABLED = 33;
+
+    /** */
+    private static final int OP_GET_BASELINE_AUTO_ADJ_TIMEOUT = 34;
+
+    /** */
+    private static final int OP_SET_BASELINE_AUTO_ADJ_TIMEOUT = 35;
 
     /** Start latch. */
     private final CountDownLatch startLatch = new CountDownLatch(1);
@@ -438,6 +458,12 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
 
                 return 0;
             }
+
+            case OP_SET_BASELINE_AUTO_ADJ_TIMEOUT: {
+                ctx.grid().cluster().baselineAutoAdjustTimeout(val);
+
+                return 0;
+            }
         }
 
         return PlatformAbstractTarget.throwUnsupported(type);
@@ -475,7 +501,7 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
             }
 
             case OP_ADD_CACHE_CONFIGURATION:
-                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader);
+                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader, DEFAULT_VER);
 
                 ctx.grid().addCacheConfiguration(cfg);
 
@@ -491,8 +517,25 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
 
                 return 0;
 
+            case OP_SET_TX_TIMEOUT_ON_PME:
+                ctx.grid().cluster().setTxTimeoutOnPartitionMapExchange(reader.readLong());
+
+                return 0;
+
             case OP_IS_WAL_ENABLED:
                 return ctx.grid().cluster().isWalEnabled(reader.readString()) ? TRUE : FALSE;
+
+            case OP_IS_BASELINE_AUTO_ADJ_ENABLED:
+                return ctx.grid().cluster().isBaselineAutoAdjustEnabled() ? TRUE : FALSE;
+
+            case OP_SET_BASELINE_AUTO_ADJ_ENABLED:
+                boolean isEnabled = reader.readBoolean();
+                ctx.grid().cluster().baselineAutoAdjustEnabled(isEnabled);
+
+                return 0;
+
+            case OP_GET_BASELINE_AUTO_ADJ_TIMEOUT:
+                return ctx.grid().cluster().baselineAutoAdjustTimeout();
         }
 
         return PlatformAbstractTarget.throwUnsupported(type);
@@ -539,7 +582,7 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
             }
 
             case OP_CREATE_CACHE_FROM_CONFIG: {
-                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader);
+                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader, DEFAULT_VER);
 
                 IgniteCacheProxy cache = reader.readBoolean()
                         ? (IgniteCacheProxy)ctx.grid().createCache(cfg, PlatformConfigurationUtils.readNearConfiguration(reader))
@@ -549,7 +592,7 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
             }
 
             case OP_GET_OR_CREATE_CACHE_FROM_CONFIG: {
-                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader);
+                CacheConfiguration cfg = PlatformConfigurationUtils.readCacheConfiguration(reader, DEFAULT_VER);
 
                 IgniteCacheProxy cache = reader.readBoolean()
                         ? (IgniteCacheProxy)ctx.grid().getOrCreateCache(cfg,
@@ -641,6 +684,12 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
 
                 return createPlatformCache(cache);
             }
+
+            case OP_GET_TRANSACTIONS: {
+                String lbl = reader.readString();
+
+                return new PlatformTransactions(platformCtx, lbl);
+            }
         }
 
         return PlatformAbstractTarget.throwUnsupported(type);
@@ -658,7 +707,7 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
     @Override public void processOutStream(int type, BinaryRawWriterEx writer) throws IgniteCheckedException {
         switch (type) {
             case OP_GET_IGNITE_CONFIGURATION: {
-                PlatformConfigurationUtils.writeIgniteConfiguration(writer, ignite().configuration());
+                PlatformConfigurationUtils.writeIgniteConfiguration(writer, ignite().configuration(), DEFAULT_VER);
 
                 return;
             }
@@ -682,6 +731,13 @@ public class PlatformProcessorImpl extends GridProcessorAdapter implements Platf
                     writer.writeObjectDetached(n.consistentId());
                     PlatformUtils.writeNodeAttributes(writer, n.attributes());
                 }
+
+                return;
+            }
+
+            case OP_NODE_VERSION: {
+                IgniteProductVersion productVersion = ignite().cluster().node().version();
+                PlatformUtils.writeNodeVersion(writer, productVersion);
 
                 return;
             }

@@ -33,7 +33,7 @@ import static org.apache.ignite.internal.sql.SqlParserUtils.parseInt;
  */
 public class SqlSetStreamingCommand implements SqlCommand {
     /** Default batch size for driver. */
-    private final static int DFLT_STREAM_BATCH_SIZE = IgniteDataStreamer.DFLT_PER_NODE_BUFFER_SIZE * 4;
+    private static final int DFLT_STREAM_BATCH_SIZE = IgniteDataStreamer.DFLT_PER_NODE_BUFFER_SIZE * 4;
 
     /** Whether streaming must be turned on or off by this command. */
     private boolean turnOn;
@@ -52,6 +52,9 @@ public class SqlSetStreamingCommand implements SqlCommand {
 
     /** Streamer flush timeout. */
     private long flushFreq;
+
+    /** Ordered streamer. */
+    private boolean ordered;
 
     /** {@inheritDoc} */
     @Override public SqlCommand parse(SqlLexer lex) {
@@ -116,6 +119,15 @@ public class SqlSetStreamingCommand implements SqlCommand {
 
                     break;
 
+                case SqlKeyword.ORDERED:
+                    lex.shift();
+
+                    checkOffLast(lex);
+
+                    ordered = true;
+
+                    break;
+
                 default:
                     return this;
             }
@@ -177,6 +189,13 @@ public class SqlSetStreamingCommand implements SqlCommand {
      */
     public long flushFrequency() {
         return flushFreq;
+    }
+
+    /**
+     * @return {@code true} if the streamer keep the order of the statements. Otherwise returns {@code false}.
+     */
+    public boolean isOrdered() {
+        return ordered;
     }
 
     /** {@inheritDoc} */

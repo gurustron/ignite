@@ -20,25 +20,28 @@ package org.apache.ignite.internal.jdbc2;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collections;
 import java.util.Properties;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteJdbcDriver;
-import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.ConnectorConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.internal.cluster.ClusterReadOnlyModeCheckedException;
 import org.apache.ignite.internal.processors.query.QueryUtils;
+import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.jdbc.thin.JdbcThinAbstractSelfTest;
 import org.apache.ignite.lang.IgniteCallable;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
-import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 import static org.apache.ignite.IgniteJdbcDriver.CFG_URL_PREFIX;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
@@ -47,7 +50,7 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 /**
  * Data streaming test.
  */
-public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
+public class JdbcStreamingSelfTest extends JdbcThinAbstractSelfTest {
     /** JDBC URL. */
     private static final String BASE_URL = CFG_URL_PREFIX +
         "cache=default@modules/clients/src/test/config/jdbc-config.xml";
@@ -55,9 +58,6 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
     /** Streaming URL. */
     private static final String STREAMING_URL = CFG_URL_PREFIX +
         "cache=person@modules/clients/src/test/config/jdbc-config.xml";
-
-    /** */
-    protected transient IgniteLogger log;
 
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
@@ -114,11 +114,6 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
         U.sleep(1000);
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-    }
-
     /**
      * @return Connection without streaming initially turned on.
      * @throws SQLException if failed.
@@ -172,6 +167,60 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception if failed.
      */
+    @Test
+    public void testStreamedInsertFailsOnReadOnlyMode() throws Exception {
+        grid(0).cluster().readOnly(true);
+
+        try {
+            assertTrue(grid(0).cluster().readOnly());
+
+            boolean failed = false;
+
+            try (Connection ordinalCon = createOrdinaryConnection();
+                 Statement selectStmt = ordinalCon.createStatement()
+            ) {
+                try (ResultSet rs = selectStmt.executeQuery("select count(*) from PUBLIC.Person")) {
+                    assertTrue(rs.next());
+
+                    assertEquals(0, rs.getLong(1));
+                }
+
+                try (Connection conn = createStreamedConnection(true)) {
+                    try (PreparedStatement stmt =
+                             conn.prepareStatement("insert into PUBLIC.Person(\"id\", \"name\") values (?, ?)")
+                    ) {
+                        for (int i = 1; i <= 2; i++) {
+                            stmt.setInt(1, i);
+                            stmt.setString(2, nameForId(i));
+
+                            stmt.executeUpdate();
+                        }
+                    }
+                }
+                catch (Exception e) {
+                    log.error("Insert failed", e);
+
+                    failed = X.hasCause(e, ClusterReadOnlyModeCheckedException.class);
+                }
+
+                try (ResultSet rs = selectStmt.executeQuery("select count(*) from PUBLIC.Person")) {
+                    assertTrue(rs.next());
+
+                    assertEquals("Insert should be failed", 0, rs.getLong(1));
+                }
+            }
+
+            assertTrue(failed);
+        }
+        finally {
+            grid(0).cluster().readOnly(false);
+        }
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
     public void testStreamedInsert() throws Exception {
         for (int i = 10; i <= 100; i += 10)
             put(i, nameForId(i * 100));
@@ -202,6 +251,7 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testStreamedInsertWithoutColumnsList() throws Exception {
         for (int i = 10; i <= 100; i += 10)
             put(i, nameForId(i * 100));
@@ -232,6 +282,7 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testStreamedInsertWithOverwritesAllowed() throws Exception {
         for (int i = 10; i <= 100; i += 10)
             put(i, nameForId(i * 100));
@@ -257,6 +308,7 @@ public class JdbcStreamingSelfTest extends GridCommonAbstractTest {
     }
 
     /** */
+    @Test
     public void testOnlyInsertsAllowed() {
         assertStatementForbidden("CREATE TABLE PUBLIC.X (x int primary key, y int)");
 

@@ -19,7 +19,6 @@ namespace Apache.Ignite.Core.Impl.Client
 {
     using System;
     using System.Collections.Concurrent;
-    using System.Collections.Generic;
     using System.Diagnostics;
     using System.Diagnostics.CodeAnalysis;
     using System.IO;
@@ -28,8 +27,8 @@ namespace Apache.Ignite.Core.Impl.Client
     using System.Net.Sockets;
     using System.Threading;
     using System.Threading.Tasks;
+    using Apache.Ignite.Core.Cache.Affinity;
     using Apache.Ignite.Core.Client;
-    using Apache.Ignite.Core.Common;
     using Apache.Ignite.Core.Impl.Binary;
     using Apache.Ignite.Core.Impl.Binary.IO;
     using Apache.Ignite.Core.Impl.Common;
@@ -37,7 +36,7 @@ namespace Apache.Ignite.Core.Impl.Client
     /// <summary>
     /// Wrapper over framework socket for Ignite thin client operations.
     /// </summary>
-    internal sealed class ClientSocket : IDisposable
+    internal sealed class ClientSocket : IClientSocket
     {
         /** Version 1.0.0. */
         private static readonly ClientProtocolVersion Ver100 = new ClientProtocolVersion(1, 0, 0);
@@ -45,8 +44,25 @@ namespace Apache.Ignite.Core.Impl.Client
         /** Version 1.1.0. */
         private static readonly ClientProtocolVersion Ver110 = new ClientProtocolVersion(1, 1, 0);
 
+        /** Version 1.2.0. */
+        public static readonly ClientProtocolVersion Ver120 = new ClientProtocolVersion(1, 2, 0);
+
+        /** Version 1.3.0. */
+        public static readonly ClientProtocolVersion Ver130 = new ClientProtocolVersion(1, 3, 0);
+
+        /** Version 1.4.0. */
+        public static readonly ClientProtocolVersion Ver140 = new ClientProtocolVersion(1, 4, 0);
+
+        /** Version 1.5.0. */
+        // This version is reserved for IEP-34 Thin client: transactions support
+        // ReSharper disable once UnusedMember.Global
+        public static readonly ClientProtocolVersion Ver150 = new ClientProtocolVersion(1, 5, 0);
+
+        /** Version 1.6.0. */
+        public static readonly ClientProtocolVersion Ver160 = new ClientProtocolVersion(1, 6, 0);
+
         /** Current version. */
-        private static readonly ClientProtocolVersion CurrentProtocolVersion = Ver110;
+        public static readonly ClientProtocolVersion CurrentProtocolVersion = Ver160;
 
         /** Handshake opcode. */
         private const byte OpHandshake = 1;
@@ -68,6 +84,9 @@ namespace Apache.Ignite.Core.Impl.Client
 
         /** Callback checker guard. */
         private volatile bool _checkingTimeouts;
+
+        /** Server protocol version. */
+        public ClientProtocolVersion ServerVersion { get; private set; }
 
         /** Current async operations, map from request id. */
         private readonly ConcurrentDictionary<long, Request> _requests
@@ -91,23 +110,34 @@ namespace Apache.Ignite.Core.Impl.Client
         /** Disposed flag. */
         private bool _isDisposed;
 
+        /** Topology version update callback. */
+        private readonly Action<AffinityTopologyVersion> _topVerCallback;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="ClientSocket" /> class.
         /// </summary>
         /// <param name="clientConfiguration">The client configuration.</param>
+        /// <param name="endPoint">The end point to connect to.</param>
+        /// <param name="host">The host name (required for SSL).</param>
         /// <param name="version">Protocol version.</param>
-        public ClientSocket(IgniteClientConfiguration clientConfiguration, ClientProtocolVersion? version = null)
+        /// <param name="topVerCallback">Topology version update callback.</param>
+        public ClientSocket(IgniteClientConfiguration clientConfiguration, EndPoint endPoint, string host,
+            ClientProtocolVersion? version = null,
+            Action<AffinityTopologyVersion> topVerCallback = null)
         {
             Debug.Assert(clientConfiguration != null);
 
+            _topVerCallback = topVerCallback;
             _timeout = clientConfiguration.SocketTimeout;
 
-            _socket = Connect(clientConfiguration);
-            _stream = GetSocketStream(_socket, clientConfiguration);
+            _socket = Connect(clientConfiguration, endPoint);
+            _stream = GetSocketStream(_socket, clientConfiguration, host);
+
+            ServerVersion = version ?? CurrentProtocolVersion;
 
             Validate(clientConfiguration);
 
-            Handshake(clientConfiguration, version ?? CurrentProtocolVersion);
+            Handshake(clientConfiguration, ServerVersion);
 
             // Check periodically if any request has timed out.
             if (_timeout > TimeSpan.Zero)
@@ -117,7 +147,8 @@ namespace Apache.Ignite.Core.Impl.Client
             }
 
             // Continuously and asynchronously wait for data from server.
-            TaskRunner.Run(WaitForMessages);
+            // TaskCreationOptions.LongRunning actually means a new thread.
+            TaskRunner.Run(WaitForMessages, TaskCreationOptions.LongRunning);
         }
 
         /// <summary>
@@ -153,7 +184,7 @@ namespace Apache.Ignite.Core.Impl.Client
         {
             // Encode.
             var reqMsg = WriteMessage(writeAction, opId);
-            
+
             // Send.
             var response = SendRequest(ref reqMsg);
 
@@ -174,7 +205,33 @@ namespace Apache.Ignite.Core.Impl.Client
             var task = SendRequestAsync(ref reqMsg);
 
             // Decode.
+            // NOTE: ContWith explicitly uses TaskScheduler.Default,
+            // which runs DecodeResponse (and any user continuations) on a thread pool thread,
+            // so that WaitForMessages thread does not do anything except reading from the socket.
             return task.ContWith(responseTask => DecodeResponse(responseTask.Result, readFunc, errorFunc));
+        }
+
+        /// <summary>
+        /// Gets the current remote EndPoint.
+        /// </summary>
+        public EndPoint RemoteEndPoint { get { return _socket.RemoteEndPoint; } }
+
+        /// <summary>
+        /// Gets the current local EndPoint.
+        /// </summary>
+        public EndPoint LocalEndPoint { get { return _socket.LocalEndPoint; } }
+
+        /// <summary>
+        /// Gets the ID of the connected server node.
+        /// </summary>
+        public Guid? ServerNodeId { get; private set; }
+
+        /// <summary>
+        /// Gets a value indicating whether this socket is disposed.
+        /// </summary>
+        public bool IsDisposed
+        {
+            get { return _isDisposed; }
         }
 
         /// <summary>
@@ -227,20 +284,50 @@ namespace Apache.Ignite.Core.Impl.Client
             Request req;
             if (!_requests.TryRemove(requestId, out req))
             {
+                if (_exception != null)
+                {
+                    return;
+                }
+
                 // Response with unknown id.
                 throw new IgniteClientException("Invalid thin client response id: " + requestId);
             }
 
-            req.CompletionSource.TrySetResult(stream);
+            if (req != null)
+            {
+                req.CompletionSource.TrySetResult(stream);
+            }
         }
 
         /// <summary>
         /// Decodes the response that we got from <see cref="HandleResponse"/>.
         /// </summary>
-        private static T DecodeResponse<T>(BinaryHeapStream stream, Func<IBinaryStream, T> readFunc, 
+        private T DecodeResponse<T>(BinaryHeapStream stream, Func<IBinaryStream, T> readFunc,
             Func<ClientStatusCode, string, T> errorFunc)
         {
-            var statusCode = (ClientStatusCode)stream.ReadInt();
+            ClientStatusCode statusCode;
+
+            if (ServerVersion.CompareTo(Ver140) >= 0)
+            {
+                var flags = (ClientFlags) stream.ReadShort();
+
+                if ((flags & ClientFlags.AffinityTopologyChanged) == ClientFlags.AffinityTopologyChanged)
+                {
+                    var topVer = new AffinityTopologyVersion(stream.ReadLong(), stream.ReadInt());
+                    if (_topVerCallback != null)
+                    {
+                        _topVerCallback(topVer);
+                    }
+                }
+
+                statusCode = (flags & ClientFlags.Error) == ClientFlags.Error
+                    ? (ClientStatusCode) stream.ReadInt()
+                    : ClientStatusCode.Success;
+            }
+            else
+            {
+                statusCode = (ClientStatusCode) stream.ReadInt();
+            }
 
             if (statusCode == ClientStatusCode.Success)
             {
@@ -290,8 +377,8 @@ namespace Apache.Ignite.Core.Impl.Client
                     BinaryUtils.Marshaller.FinishMarshal(writer);
                 }
             }, 12, out messageLen);
-            
-            _stream.Write(buf, 0, messageLen);
+
+            SocketWrite(buf, messageLen);
 
             // Decode response.
             var res = ReceiveMessage();
@@ -303,10 +390,17 @@ namespace Apache.Ignite.Core.Impl.Client
 
                 if (success)
                 {
+                    if (version.CompareTo(Ver140) >= 0)
+                    {
+                        ServerNodeId = BinaryUtils.Marshaller.Unmarshal<Guid>(stream);
+                    }
+
+                    ServerVersion = version;
+
                     return;
                 }
 
-                var serverVersion =
+                ServerVersion =
                     new ClientProtocolVersion(stream.ReadShort(), stream.ReadShort(), stream.ReadShort());
 
                 var errMsg = BinaryUtils.Marshaller.Unmarshal<string>(stream);
@@ -325,17 +419,17 @@ namespace Apache.Ignite.Core.Impl.Client
                 }
 
                 // Re-try if possible.
-                bool retry = serverVersion.CompareTo(version) < 0 && serverVersion.Equals(Ver100);
+                bool retry = ServerVersion.CompareTo(version) < 0 && ServerVersion.Equals(Ver100);
 
                 if (retry)
                 {
-                    Handshake(clientConfiguration, serverVersion);
+                    Handshake(clientConfiguration, ServerVersion);
                 }
                 else
                 {
                     throw new IgniteClientException(string.Format(
                         "Client handshake failed: '{0}'. Client version: {1}. Server version: {2}",
-                        errMsg, version, serverVersion), null, errCode);
+                        errMsg, version, ServerVersion), null, errCode);
                 }
             }
         }
@@ -360,11 +454,11 @@ namespace Apache.Ignite.Core.Impl.Client
             // Socket.Receive can return any number of bytes, even 1.
             // We should repeat Receive calls until required amount of data has been received.
             var buf = new byte[size];
-            var received = _stream.Read(buf,0, size);
+            var received = SocketRead(buf, 0, size);
 
             while (received < size)
             {
-                var res = _stream.Read(buf, received, size - received);
+                var res = SocketRead(buf, received, size - received);
 
                 if (res == 0)
                 {
@@ -400,7 +494,7 @@ namespace Apache.Ignite.Core.Impl.Client
 
                     if (_requests.IsEmpty)
                     {
-                        _stream.Write(reqMsg.Buffer, 0, reqMsg.Length);
+                        SocketWrite(reqMsg.Buffer, reqMsg.Length);
 
                         var respMsg = ReceiveMessage();
                         var response = new BinaryHeapStream(respMsg);
@@ -441,7 +535,7 @@ namespace Apache.Ignite.Core.Impl.Client
                 Debug.Assert(added);
 
                 // Send.
-                _stream.Write(reqMsg.Buffer, 0, reqMsg.Length);
+                SocketWrite(reqMsg.Buffer, reqMsg.Length);
                 _listenerEvent.Set();
                 return req.CompletionSource.Task;
             }
@@ -480,64 +574,73 @@ namespace Apache.Ignite.Core.Impl.Client
         }
 
         /// <summary>
+        /// Writes to the socket. All socket writes should go through this method.
+        /// </summary>
+        private void SocketWrite(byte[] buf, int len)
+        {
+            try
+            {
+                _stream.Write(buf, 0, len);
+            }
+            catch (Exception e)
+            {
+                _exception = e;
+                Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Reads from the socket. All socket reads should go through this method.
+        /// </summary>
+        private int SocketRead(byte[] buf, int pos, int len)
+        {
+            try
+            {
+                return _stream.Read(buf, pos, len);
+            }
+            catch (Exception e)
+            {
+                _exception = e;
+                Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>
         /// Connects the socket.
         /// </summary>
-        [SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope", 
+        [SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope",
             Justification = "Socket is returned from this method.")]
-        private static Socket Connect(IgniteClientConfiguration cfg)
+        private static Socket Connect(IgniteClientConfiguration cfg, EndPoint endPoint)
         {
-            List<Exception> errors = null;
-
-            foreach (var ipEndPoint in GetEndPoints(cfg))
+            var socket = new Socket(endPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
-                try
-                {
-                    var socket = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-                    {
-                        NoDelay = cfg.TcpNoDelay,
-                        Blocking = true,
-                        SendTimeout = (int) cfg.SocketTimeout.TotalMilliseconds,
-                        ReceiveTimeout = (int) cfg.SocketTimeout.TotalMilliseconds
-                    };
+                NoDelay = cfg.TcpNoDelay,
+                Blocking = true,
+                SendTimeout = (int) cfg.SocketTimeout.TotalMilliseconds,
+                ReceiveTimeout = (int) cfg.SocketTimeout.TotalMilliseconds
+            };
 
-                    if (cfg.SocketSendBufferSize != IgniteClientConfiguration.DefaultSocketBufferSize)
-                    {
-                        socket.SendBufferSize = cfg.SocketSendBufferSize;
-                    }
-
-                    if (cfg.SocketReceiveBufferSize != IgniteClientConfiguration.DefaultSocketBufferSize)
-                    {
-                        socket.ReceiveBufferSize = cfg.SocketReceiveBufferSize;
-                    }
-
-                    socket.Connect(ipEndPoint);
-
-                    return socket;
-                }
-                catch (SocketException e)
-                {
-                    if (errors == null)
-                    {
-                        errors = new List<Exception>();
-                    }
-
-                    errors.Add(e);
-                }
+            if (cfg.SocketSendBufferSize != IgniteClientConfiguration.DefaultSocketBufferSize)
+            {
+                socket.SendBufferSize = cfg.SocketSendBufferSize;
             }
 
-            if (errors == null)
+            if (cfg.SocketReceiveBufferSize != IgniteClientConfiguration.DefaultSocketBufferSize)
             {
-                throw new IgniteException("Failed to resolve client host: " + cfg.Host);
+                socket.ReceiveBufferSize = cfg.SocketReceiveBufferSize;
             }
 
-            throw new AggregateException("Failed to establish Ignite thin client connection, " +
-                                         "examine inner exceptions for details.", errors);
+            socket.Connect(endPoint);
+
+            return socket;
         }
 
         /// <summary>
         /// Gets the socket stream.
         /// </summary>
-        private static Stream GetSocketStream(Socket socket, IgniteClientConfiguration cfg)
+        private static Stream GetSocketStream(Socket socket, IgniteClientConfiguration cfg, string host)
         {
             var stream = new NetworkStream(socket)
             {
@@ -550,30 +653,7 @@ namespace Apache.Ignite.Core.Impl.Client
                 return stream;
             }
 
-            return cfg.SslStreamFactory.Create(stream, cfg.Host);
-        }
-
-        /// <summary>
-        /// Gets the endpoints: all combinations of IP addresses and ports according to configuration.
-        /// </summary>
-        private static IEnumerable<IPEndPoint> GetEndPoints(IgniteClientConfiguration cfg)
-        {
-            var host = cfg.Host;
-
-            if (host == null)
-            {
-                throw new IgniteException("IgniteClientConfiguration.Host cannot be null.");
-            }
-
-            // GetHostEntry accepts IPs, but TryParse is a more efficient shortcut.
-            IPAddress ip;
-
-            if (IPAddress.TryParse(host, out ip))
-            {
-                return new[] {new IPEndPoint(ip, cfg.Port)};
-            }
-
-            return Dns.GetHostEntry(host).AddressList.Select(x => new IPEndPoint(x, cfg.Port));
+            return cfg.SslStreamFactory.Create(stream, host);
         }
 
         /// <summary>
@@ -599,12 +679,11 @@ namespace Apache.Ignite.Core.Impl.Client
                 {
                     var req = pair.Value;
 
-                    if (req.Duration > _timeout)
+                    if (req != null && req.Duration > _timeout)
                     {
-                        Console.WriteLine(req.Duration);
-                        req.CompletionSource.TrySetException(new SocketException((int)SocketError.TimedOut));
+                        _requests[pair.Key] = null;
 
-                        _requests.TryRemove(pair.Key, out req);
+                        req.CompletionSource.TrySetException(new SocketException((int)SocketError.TimedOut));
                     }
                 }
             }
@@ -651,7 +730,7 @@ namespace Apache.Ignite.Core.Impl.Client
                 foreach (var reqId in _requests.Keys.ToArray())
                 {
                     Request req;
-                    if (_requests.TryRemove(reqId, out req))
+                    if (_requests.TryRemove(reqId, out req) && req != null)
                     {
                         req.CompletionSource.TrySetException(ex);
                     }

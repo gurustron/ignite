@@ -24,9 +24,14 @@ import java.util.UUID;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.Ignition;
+import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.ml.dataset.Dataset;
+import org.apache.ignite.ml.dataset.DatasetBuilder;
 import org.apache.ignite.ml.dataset.PartitionDataBuilder;
+import org.apache.ignite.ml.dataset.UpstreamTransformerBuilder;
 import org.apache.ignite.ml.dataset.impl.cache.util.ComputeUtils;
+import org.apache.ignite.ml.environment.LearningEnvironment;
+import org.apache.ignite.ml.environment.LearningEnvironmentBuilder;
 import org.apache.ignite.ml.math.functions.IgniteBiFunction;
 import org.apache.ignite.ml.math.functions.IgniteBinaryOperator;
 import org.apache.ignite.ml.math.functions.IgniteFunction;
@@ -43,9 +48,6 @@ import org.apache.ignite.ml.math.functions.IgniteTriFunction;
  */
 public class CacheBasedDataset<K, V, C extends Serializable, D extends AutoCloseable>
     implements Dataset<C, D> {
-    /** Number of retries for the case when one of partitions not found on the node where computation is performed. */
-    private static final int RETRIES = 15 * 60;
-
     /** Retry interval (ms) for the case when one of partitions not found on the node where computation is performed. */
     private static final int RETRY_INTERVAL = 1000;
 
@@ -54,6 +56,12 @@ public class CacheBasedDataset<K, V, C extends Serializable, D extends AutoClose
 
     /** Ignite Cache with {@code upstream} data. */
     private final IgniteCache<K, V> upstreamCache;
+
+    /** Filter for {@code upstream} data. */
+    private final IgniteBiPredicate<K, V> filter;
+
+    /** Builder of transformation applied to upstream. */
+    private final UpstreamTransformerBuilder upstreamTransformerBuilder;
 
     /** Ignite Cache with partition {@code context}. */
     private final IgniteCache<Integer, C> datasetCache;
@@ -64,45 +72,84 @@ public class CacheBasedDataset<K, V, C extends Serializable, D extends AutoClose
     /** Dataset ID that is used to identify dataset in local storage on the node where computation is performed. */
     private final UUID datasetId;
 
+    /** Learning environment builder. */
+    private final LearningEnvironmentBuilder envBuilder;
+
+    /** Upstream keep binary. */
+    private final boolean upstreamKeepBinary;
+
+    /** Number of retries for the case when one of partitions not found on the node where computation is performed. */
+    private final int retries;
+
+    /**
+     * Client-side learning environment.
+     */
+    private final LearningEnvironment localLearningEnv;
+
     /**
      * Constructs a new instance of dataset based on Ignite Cache, which is used as {@code upstream} and as reliable storage for
      * partition {@code context} as well.
      *
      * @param ignite Ignite instance.
      * @param upstreamCache Ignite Cache with {@code upstream} data.
+     * @param filter Filter for {@code upstream} data.
+     * @param upstreamTransformerBuilder Transformer of upstream data (see description in {@link DatasetBuilder}).
      * @param datasetCache Ignite Cache with partition {@code context}.
      * @param partDataBuilder Partition {@code data} builder.
      * @param datasetId Dataset ID.
+     * @param localLearningEnv Local learning environment.
+     * @param retriesCnt Number of retries for the case when one of partitions not found on the node where computation is performed.
      */
-    public CacheBasedDataset(Ignite ignite, IgniteCache<K, V> upstreamCache,
-        IgniteCache<Integer, C> datasetCache, PartitionDataBuilder<K, V, C, D> partDataBuilder,
-        UUID datasetId) {
+    public CacheBasedDataset(
+        Ignite ignite,
+        IgniteCache<K, V> upstreamCache,
+        IgniteBiPredicate<K, V> filter,
+        UpstreamTransformerBuilder upstreamTransformerBuilder,
+        IgniteCache<Integer, C> datasetCache,
+        LearningEnvironmentBuilder envBuilder,
+        PartitionDataBuilder<K, V, C, D> partDataBuilder,
+        UUID datasetId,
+        boolean upstreamKeepBinary,
+        LearningEnvironment localLearningEnv,
+        int retriesCnt) {
+
         this.ignite = ignite;
         this.upstreamCache = upstreamCache;
+        this.filter = filter;
+        this.upstreamTransformerBuilder = upstreamTransformerBuilder;
         this.datasetCache = datasetCache;
         this.partDataBuilder = partDataBuilder;
+        this.envBuilder = envBuilder;
         this.datasetId = datasetId;
+        this.upstreamKeepBinary = upstreamKeepBinary;
+        this.localLearningEnv = localLearningEnv;
+        this.retries = retriesCnt;
     }
 
     /** {@inheritDoc} */
-    @Override public <R> R computeWithCtx(IgniteTriFunction<C, D, Integer, R> map, IgniteBinaryOperator<R> reduce, R identity) {
+    @Override public <R> R computeWithCtx(IgniteTriFunction<C, D, LearningEnvironment, R> map, IgniteBinaryOperator<R> reduce, R identity) {
         String upstreamCacheName = upstreamCache.getName();
         String datasetCacheName = datasetCache.getName();
 
         return computeForAllPartitions(part -> {
+            LearningEnvironment env = ComputeUtils.getLearningEnvironment(ignite, datasetId, part, envBuilder);
+
             C ctx = ComputeUtils.getContext(Ignition.localIgnite(), datasetCacheName, part);
 
             D data = ComputeUtils.getData(
                 Ignition.localIgnite(),
                 upstreamCacheName,
+                filter,
+                upstreamTransformerBuilder,
                 datasetCacheName,
                 datasetId,
-                part,
-                partDataBuilder
+                partDataBuilder,
+                env,
+                upstreamKeepBinary
             );
 
             if (data != null) {
-                R res = map.apply(ctx, data, part);
+                R res = map.apply(ctx, data, env);
 
                 // Saves partition context after update.
                 ComputeUtils.saveContext(Ignition.localIgnite(), datasetCacheName, part, ctx);
@@ -115,27 +162,33 @@ public class CacheBasedDataset<K, V, C extends Serializable, D extends AutoClose
     }
 
     /** {@inheritDoc} */
-    @Override public <R> R compute(IgniteBiFunction<D, Integer, R> map, IgniteBinaryOperator<R> reduce, R identity) {
+    @Override public <R> R compute(IgniteBiFunction<D, LearningEnvironment, R> map, IgniteBinaryOperator<R> reduce, R identity) {
         String upstreamCacheName = upstreamCache.getName();
         String datasetCacheName = datasetCache.getName();
 
         return computeForAllPartitions(part -> {
+            LearningEnvironment env = ComputeUtils.getLearningEnvironment(Ignition.localIgnite(), datasetId, part, envBuilder);
+
             D data = ComputeUtils.getData(
                 Ignition.localIgnite(),
                 upstreamCacheName,
+                filter,
+                upstreamTransformerBuilder,
                 datasetCacheName,
                 datasetId,
-                part,
-                partDataBuilder
+                partDataBuilder,
+                env,
+                upstreamKeepBinary
             );
-
-            return data != null ? map.apply(data, part) : null;
+            return data != null ? map.apply(data, env) : null;
         }, reduce, identity);
     }
 
     /** {@inheritDoc} */
     @Override public void close() {
         datasetCache.destroy();
+        ComputeUtils.removeData(ignite, datasetId);
+        ComputeUtils.removeLearningEnv(ignite, datasetId);
     }
 
     /**
@@ -151,11 +204,12 @@ public class CacheBasedDataset<K, V, C extends Serializable, D extends AutoClose
      */
     private <R> R computeForAllPartitions(IgniteFunction<Integer, R> fun, IgniteBinaryOperator<R> reduce, R identity) {
         Collection<String> cacheNames = Arrays.asList(datasetCache.getName(), upstreamCache.getName());
-        Collection<R> results = ComputeUtils.affinityCallWithRetries(ignite, cacheNames, fun, RETRIES, RETRY_INTERVAL);
+        Collection<R> results = ComputeUtils.affinityCallWithRetries(ignite, cacheNames, fun, retries, RETRY_INTERVAL, localLearningEnv.deployingContext());
 
         R res = identity;
         for (R partRes : results)
-            res = reduce.apply(res, partRes);
+            if (partRes != null)
+                res = reduce.apply(res, partRes);
 
         return res;
     }

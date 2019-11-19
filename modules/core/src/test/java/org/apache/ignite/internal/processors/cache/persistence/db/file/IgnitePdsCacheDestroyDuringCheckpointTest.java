@@ -19,7 +19,6 @@ package org.apache.ignite.internal.processors.cache.persistence.db.file;
 
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
-import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CachePeekMode;
@@ -28,10 +27,9 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.testframework.GridTestUtils.SF;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
-
-import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
+import org.junit.Test;
 
 /**
  * Test for cache creation/deletion with frequent checkpoints.
@@ -41,10 +39,10 @@ public class IgnitePdsCacheDestroyDuringCheckpointTest extends GridCommonAbstrac
     private static final String NAME_PREFIX = "CACHE-";
 
     /** */
-    private static final int NUM_ITERATIONS = 10;
+    private static final int NUM_ITERATIONS = SF.applyLB(5, 3);
 
     /** */
-    private static final int NUM_CACHES = 10;
+    private static final int NUM_CACHES = SF.applyLB(10, 3);
 
     /** */
     private static final int NUM_ENTRIES_PER_CACHE = 200;
@@ -68,10 +66,11 @@ public class IgnitePdsCacheDestroyDuringCheckpointTest extends GridCommonAbstrac
         DataStorageConfiguration storageCfg = new DataStorageConfiguration();
         storageCfg.setCheckpointFrequency(300);
 
-        DataRegionConfiguration regionConfig = new DataRegionConfiguration();
-        regionConfig.setPersistenceEnabled(true);
-
-        storageCfg.setDefaultDataRegionConfiguration(regionConfig);
+        storageCfg.setDefaultDataRegionConfiguration(
+            new DataRegionConfiguration()
+                .setPersistenceEnabled(true)
+                .setMaxSize(DataStorageConfiguration.DFLT_DATA_REGION_INITIAL_SIZE)
+        );
 
         return storageCfg;
     }
@@ -85,8 +84,6 @@ public class IgnitePdsCacheDestroyDuringCheckpointTest extends GridCommonAbstrac
 
     /** {@inheritDoc} */
     @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
         stopAllGrids();
 
         cleanPersistenceDir();
@@ -95,6 +92,7 @@ public class IgnitePdsCacheDestroyDuringCheckpointTest extends GridCommonAbstrac
     /**
      * @throws Exception If fail.
      */
+    @Test
     public void testCacheCreatePutCheckpointDestroy() throws Exception {
         IgniteEx ig = startGrid(0);
         ig.active(true);
@@ -114,7 +112,6 @@ public class IgnitePdsCacheDestroyDuringCheckpointTest extends GridCommonAbstrac
             client.close();
         }
     }
-
 
     /** */
     private void populateCache(Ignite client) {

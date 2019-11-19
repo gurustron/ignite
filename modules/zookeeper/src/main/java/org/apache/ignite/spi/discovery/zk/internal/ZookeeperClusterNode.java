@@ -31,11 +31,11 @@ import org.apache.ignite.cache.CacheMetrics;
 import org.apache.ignite.cluster.ClusterMetrics;
 import org.apache.ignite.internal.ClusterMetricsSnapshot;
 import org.apache.ignite.internal.IgniteNodeAttributes;
+import org.apache.ignite.internal.SecurityCredentialsAttrFilterPredicate;
 import org.apache.ignite.internal.managers.discovery.IgniteClusterNode;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.lang.IgniteProductVersion;
 import org.apache.ignite.spi.discovery.DiscoveryMetricsProvider;
 import org.jetbrains.annotations.Nullable;
@@ -158,7 +158,7 @@ public class ZookeeperClusterNode implements IgniteClusterNode, Externalizable, 
     }
 
     /** {@inheritDoc} */
-    public void setConsistentId(Serializable consistentId) {
+    @Override public void setConsistentId(Serializable consistentId) {
         this.consistentId = consistentId;
 
         final Map<String, Object> map = new HashMap<>(attrs);
@@ -166,11 +166,6 @@ public class ZookeeperClusterNode implements IgniteClusterNode, Externalizable, 
         map.put(ATTR_NODE_CONSISTENT_ID, consistentId);
 
         attrs = Collections.unmodifiableMap(map);
-    }
-
-    /** {@inheritDoc} */
-    @Override public boolean isCacheClient() {
-        return isClient();
     }
 
     /** {@inheritDoc} */
@@ -216,7 +211,7 @@ public class ZookeeperClusterNode implements IgniteClusterNode, Externalizable, 
     }
 
     /** {@inheritDoc} */
-    public void setMetrics(ClusterMetrics metrics) {
+    @Override public void setMetrics(ClusterMetrics metrics) {
         assert metrics != null;
 
         this.metrics = metrics;
@@ -236,18 +231,14 @@ public class ZookeeperClusterNode implements IgniteClusterNode, Externalizable, 
     }
 
     /** {@inheritDoc} */
-    public void setCacheMetrics(Map<Integer, CacheMetrics> cacheMetrics) {
+    @Override public void setCacheMetrics(Map<Integer, CacheMetrics> cacheMetrics) {
         this.cacheMetrics = cacheMetrics != null ? cacheMetrics : Collections.<Integer, CacheMetrics>emptyMap();
     }
 
     /** {@inheritDoc} */
     @Override public Map<String, Object> attributes() {
         // Even though discovery SPI removes this attribute after authentication, keep this check for safety.
-        return F.view(attrs, new IgnitePredicate<String>() {
-            @Override public boolean apply(String s) {
-                return !IgniteNodeAttributes.ATTR_SECURITY_CREDENTIALS.equals(s);
-            }
-        });
+        return F.view(attrs, new SecurityCredentialsAttrFilterPredicate());
     }
 
     /** {@inheritDoc} */

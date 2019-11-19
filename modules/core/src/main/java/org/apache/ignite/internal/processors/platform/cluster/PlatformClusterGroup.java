@@ -48,7 +48,6 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Interop projection.
  */
-@SuppressWarnings({"UnusedDeclaration"})
 public class PlatformClusterGroup extends PlatformAbstractTarget {
     /** */
     private static final int OP_FOR_ATTRIBUTE = 2;
@@ -222,7 +221,7 @@ public class PlatformClusterGroup extends PlatformAbstractTarget {
     }
 
     /** {@inheritDoc} */
-    @SuppressWarnings({"ConstantConditions", "deprecation"})
+    @SuppressWarnings({"deprecation"})
     @Override public void processInStreamOutStream(int type, BinaryRawReaderEx reader, BinaryRawWriterEx writer)
         throws IgniteCheckedException {
         switch (type) {
@@ -550,6 +549,7 @@ public class PlatformClusterGroup extends PlatformAbstractTarget {
 
         writer.writeString(metrics.getName());
         writer.writeLong(metrics.getTotalAllocatedPages());
+        writer.writeLong(metrics.getTotalUsedPages());
         writer.writeLong(metrics.getTotalAllocatedSize());
         writer.writeFloat(metrics.getAllocationRate());
         writer.writeFloat(metrics.getEvictionRate());
@@ -560,9 +560,15 @@ public class PlatformClusterGroup extends PlatformAbstractTarget {
         writer.writeFloat(metrics.getPagesReplaceAge());
         writer.writeLong(metrics.getPhysicalMemoryPages());
         writer.writeLong(metrics.getPhysicalMemorySize());
-        writer.writeLong(metrics.getCheckpointBufferPages());
-        writer.writeLong(metrics.getCheckpointBufferSize());
+        writer.writeLong(metrics.getUsedCheckpointBufferPages());
+        writer.writeLong(metrics.getUsedCheckpointBufferSize());
         writer.writeInt(metrics.getPageSize());
+        writer.writeLong(metrics.getCheckpointBufferSize());
+        writer.writeLong(metrics.getPagesRead());
+        writer.writeLong(metrics.getPagesWritten());
+        writer.writeLong(metrics.getPagesReplaced());
+        writer.writeLong(metrics.getOffHeapSize());
+        writer.writeLong(metrics.getOffheapUsedSize());
     }
 
     /**

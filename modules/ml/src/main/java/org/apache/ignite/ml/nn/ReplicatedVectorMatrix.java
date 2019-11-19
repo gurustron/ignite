@@ -23,17 +23,17 @@ import java.io.ObjectOutput;
 import java.util.Map;
 import java.util.Spliterator;
 import org.apache.ignite.lang.IgniteUuid;
-import org.apache.ignite.ml.math.Matrix;
-import org.apache.ignite.ml.math.MatrixStorage;
-import org.apache.ignite.ml.math.Vector;
-import org.apache.ignite.ml.math.exceptions.CardinalityException;
+import org.apache.ignite.ml.math.exceptions.math.CardinalityException;
 import org.apache.ignite.ml.math.functions.IgniteBiConsumer;
 import org.apache.ignite.ml.math.functions.IgniteBiFunction;
 import org.apache.ignite.ml.math.functions.IgniteDoubleFunction;
 import org.apache.ignite.ml.math.functions.IgniteFunction;
 import org.apache.ignite.ml.math.functions.IgniteTriFunction;
 import org.apache.ignite.ml.math.functions.IntIntToDoubleFunction;
-import org.apache.ignite.ml.math.impls.matrix.DenseLocalOnHeapMatrix;
+import org.apache.ignite.ml.math.primitives.matrix.Matrix;
+import org.apache.ignite.ml.math.primitives.matrix.MatrixStorage;
+import org.apache.ignite.ml.math.primitives.matrix.impl.DenseMatrix;
+import org.apache.ignite.ml.math.primitives.vector.Vector;
 
 /**
  * Convenient way to create matrix of replicated columns or rows from vector.
@@ -77,16 +77,6 @@ class ReplicatedVectorMatrix implements Matrix {
     }
 
     /** {@inheritDoc} */
-    @Override public boolean isSequentialAccess() {
-        return vector.isSequentialAccess();
-    }
-
-    /** {@inheritDoc} */
-    @Override public boolean isRandomAccess() {
-        return vector.isRandomAccess();
-    }
-
-    /** {@inheritDoc} */
     @Override public boolean isDense() {
         return vector.isDense();
     }
@@ -94,11 +84,6 @@ class ReplicatedVectorMatrix implements Matrix {
     /** {@inheritDoc} */
     @Override public boolean isArrayBased() {
         return vector.isArrayBased();
-    }
-
-    /** {@inheritDoc} */
-    @Override public boolean isDistributed() {
-        return vector.isDistributed();
     }
 
     /** {@inheritDoc} */
@@ -183,7 +168,7 @@ class ReplicatedVectorMatrix implements Matrix {
         return asCol ? new ReplicatedVectorMatrix(swap(row1, row2), replicationCnt, asCol) : this;
     }
 
-    /** {@inheritDoc} */
+    /** */
     private Vector swap(int idx1, int idx2) {
         double val = vector.getX(idx1);
 
@@ -205,7 +190,7 @@ class ReplicatedVectorMatrix implements Matrix {
 
     /** {@inheritDoc} */
     @Override public Matrix assign(double[][] vals) {
-        return new DenseLocalOnHeapMatrix(vals);
+        return new DenseMatrix(vals);
     }
 
     /** {@inheritDoc} */
@@ -251,7 +236,7 @@ class ReplicatedVectorMatrix implements Matrix {
         int cols = asCol ? replicationCnt : vector.size();
         int times = asCol ? cols : rows;
 
-        Matrix res = new DenseLocalOnHeapMatrix(rows, cols);
+        Matrix res = new DenseMatrix(rows, cols);
 
         IgniteBiConsumer<Integer, Vector> replicantAssigner = asCol ? res::assignColumn : res::assignRow;
         IgniteBiConsumer<Integer, Vector> assigner = res::assignColumn;
@@ -267,7 +252,7 @@ class ReplicatedVectorMatrix implements Matrix {
         int cols = asCol ? replicationCnt : vector.size();
         int times = asCol ? cols : rows;
 
-        Matrix res = new DenseLocalOnHeapMatrix(rows, cols);
+        Matrix res = new DenseMatrix(rows, cols);
 
         IgniteBiConsumer<Integer, Vector> replicantAssigner = asCol ? res::assignColumn : res::assignRow;
         IgniteBiConsumer<Integer, Vector> assigner = res::assignRow;
@@ -317,20 +302,6 @@ class ReplicatedVectorMatrix implements Matrix {
     }
 
     /** {@inheritDoc} */
-    @Override public double determinant() {
-        // If matrix is not square throw exception.
-        checkCardinality(vector.size(), replicationCnt);
-
-        // If matrix is 1x1 then determinant is its single element otherwise there are linear dependence and determinant is 0.
-        return vector.size() > 0 ? 0 : vector.get(1);
-    }
-
-    /** {@inheritDoc} */
-    @Override public Matrix inverse() {
-        throw new UnsupportedOperationException();
-    }
-
-    /** {@inheritDoc} */
     @Override public Matrix divide(double x) {
         return new ReplicatedVectorMatrix(vector.divide(x), replicationCnt, asCol);
     }
@@ -376,7 +347,7 @@ class ReplicatedVectorMatrix implements Matrix {
      * Specialized optimized version of minus for ReplicatedVectorMatrix.
      *
      * @param mtx Matrix to be subtracted.
-     * @return new ReplicatedVectorMatrix resulting from subtraction.
+     * @return New ReplicatedVectorMatrix resulting from subtraction.
      */
     public Matrix minus(ReplicatedVectorMatrix mtx) {
         if (isColumnReplicated() == mtx.isColumnReplicated()) {
@@ -404,7 +375,7 @@ class ReplicatedVectorMatrix implements Matrix {
      * Specialized optimized version of plus for ReplicatedVectorMatrix.
      *
      * @param mtx Matrix to be added.
-     * @return new ReplicatedVectorMatrix resulting from addition.
+     * @return New ReplicatedVectorMatrix resulting from addition.
      */
     public Matrix plus(ReplicatedVectorMatrix mtx) {
         if (isColumnReplicated() == mtx.isColumnReplicated()) {
@@ -506,11 +477,6 @@ class ReplicatedVectorMatrix implements Matrix {
     }
 
     /** {@inheritDoc} */
-    @Override public double maxAbsRowSumNorm() {
-        return 0;
-    }
-
-    /** {@inheritDoc} */
     @Override public double sum() {
         return vector.sum() * replicationCnt;
     }
@@ -518,16 +484,6 @@ class ReplicatedVectorMatrix implements Matrix {
     /** {@inheritDoc} */
     @Override public Matrix transpose() {
         return new ReplicatedVectorMatrix(vector, replicationCnt, !asCol);
-    }
-
-    /** {@inheritDoc} */
-    @Override public Matrix viewPart(int[] off, int[] size) {
-        return null;
-    }
-
-    /** {@inheritDoc} */
-    @Override public Matrix viewPart(int rowOff, int rows, int colOff, int cols) {
-        return null;
     }
 
     /** {@inheritDoc} */
@@ -579,5 +535,19 @@ class ReplicatedVectorMatrix implements Matrix {
      */
     public Vector replicant() {
         return vector;
+    }
+
+    /** {@inheritDoc} */
+    @Override public double determinant() {
+        // If matrix is not square throw exception.
+        checkCardinality(vector.size(), replicationCnt);
+
+        // If matrix is 1x1 then determinant is its single element otherwise there are linear dependence and determinant is 0.
+        return vector.size() > 1 ? 0 : vector.get(1);
+    }
+
+    /** {@inheritDoc} */
+    @Override public Matrix inverse() {
+        throw new UnsupportedOperationException();
     }
 }

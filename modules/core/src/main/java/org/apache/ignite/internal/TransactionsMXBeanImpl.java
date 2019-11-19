@@ -22,14 +22,10 @@ import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCompute;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.cluster.ClusterNode;
-import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.internal.visor.VisorTaskArgument;
 import org.apache.ignite.internal.visor.tx.VisorTxInfo;
 import org.apache.ignite.internal.visor.tx.VisorTxOperation;
@@ -38,7 +34,6 @@ import org.apache.ignite.internal.visor.tx.VisorTxSortOrder;
 import org.apache.ignite.internal.visor.tx.VisorTxTask;
 import org.apache.ignite.internal.visor.tx.VisorTxTaskArg;
 import org.apache.ignite.internal.visor.tx.VisorTxTaskResult;
-import org.apache.ignite.lang.IgniteClosure;
 import org.apache.ignite.mxbean.TransactionsMXBean;
 
 /**
@@ -51,7 +46,7 @@ public class TransactionsMXBeanImpl implements TransactionsMXBean {
     /**
      * @param ctx Context.
      */
-    TransactionsMXBeanImpl(GridKernalContextImpl ctx) {
+    public TransactionsMXBeanImpl(GridKernalContextImpl ctx) {
         this.ctx = ctx;
     }
 
@@ -77,15 +72,11 @@ public class TransactionsMXBeanImpl implements TransactionsMXBean {
 
             VisorTxSortOrder sortOrder = null;
 
-            if (order != null) {
-                if ("DURATION".equals(order))
-                    sortOrder = VisorTxSortOrder.DURATION;
-                else if ("SIZE".equals(order))
-                    sortOrder = VisorTxSortOrder.SIZE;
-            }
+            if (order != null)
+                sortOrder = VisorTxSortOrder.valueOf(order.toUpperCase());
 
             VisorTxTaskArg arg = new VisorTxTaskArg(kill ? VisorTxOperation.KILL : VisorTxOperation.LIST,
-                limit, minDuration == null ? null : minDuration * 1000, minSize, null, proj, consIds, xid, lbRegex, sortOrder);
+                limit, minDuration == null ? null : minDuration * 1000, minSize, null, proj, consIds, xid, lbRegex, sortOrder, null);
 
             Map<ClusterNode, VisorTxTaskResult> res = compute.execute(new VisorTxTask(),
                 new VisorTaskArgument<>(ctx.cluster().get().localNode().id(), arg, false));
@@ -104,20 +95,7 @@ public class TransactionsMXBeanImpl implements TransactionsMXBean {
                     w.println(key.toString());
 
                     for (VisorTxInfo info : entry.getValue().getInfos())
-                        w.println("    Tx: [xid=" + info.getXid() +
-                            ", label=" + info.getLabel() +
-                            ", state=" + info.getState() +
-                            ", duration=" + info.getDuration() / 1000 +
-                            ", isolation=" + info.getIsolation() +
-                            ", concurrency=" + info.getConcurrency() +
-                            ", timeout=" + info.getTimeout() +
-                            ", size=" + info.getSize() +
-                            ", dhtNodes=" + F.transform(info.getPrimaryNodes(), new IgniteClosure<UUID, String>() {
-                            @Override public String apply(UUID id) {
-                                return U.id8(id);
-                            }
-                        }) +
-                            ']');
+                        w.println(info.toUserString());
                 }
 
                 w.flush();
@@ -151,6 +129,46 @@ public class TransactionsMXBeanImpl implements TransactionsMXBean {
         catch (Exception e) {
             throw new RuntimeException(e.getMessage());
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean getTxOwnerDumpRequestsAllowed() {
+        return ctx.cache().context().tm().txOwnerDumpRequestsAllowed();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setTxOwnerDumpRequestsAllowed(boolean allowed) {
+        ctx.cache().setTxOwnerDumpRequestsAllowed(allowed);
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getLongTransactionTimeDumpThreshold() {
+        return ctx.cache().context().tm().longTransactionTimeDumpThreshold();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setLongTransactionTimeDumpThreshold(long threshold) {
+        ctx.cache().longTransactionTimeDumpThreshold(threshold);
+    }
+
+    /** {@inheritDoc} */
+    @Override public double getTransactionTimeDumpSamplesCoefficient() {
+        return ctx.cache().context().tm().transactionTimeDumpSamplesCoefficient();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setTransactionTimeDumpSamplesCoefficient(double coefficient) {
+        ctx.cache().transactionTimeDumpSamplesCoefficient(coefficient);
+    }
+
+    /** {@inheritDoc} */
+    @Override public int getTransactionTimeDumpSamplesPerSecondLimit() {
+        return ctx.cache().context().tm().transactionTimeDumpSamplesPerSecondLimit();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setTransactionTimeDumpSamplesPerSecondLimit(int limit) {
+        ctx.cache().longTransactionTimeDumpSamplesPerSecondLimit(limit);
     }
 
     /** {@inheritDoc} */

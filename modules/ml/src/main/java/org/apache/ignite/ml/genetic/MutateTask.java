@@ -22,9 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-
 import javax.cache.Cache.Entry;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteException;
@@ -36,10 +34,10 @@ import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.compute.ComputeJobResultPolicy;
 import org.apache.ignite.compute.ComputeTaskAdapter;
-import org.apache.ignite.resources.IgniteInstanceResource;
-
 import org.apache.ignite.ml.genetic.parameter.GAConfiguration;
 import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
+import org.apache.ignite.resources.IgniteInstanceResource;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Responsible for applying mutation on respective chromosomes.  <br/>
@@ -50,16 +48,16 @@ import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
     /** Ignite instance */
     @IgniteInstanceResource
-    private Ignite ignite = null;
+    private Ignite ignite;
 
     /** GAConfiguration */
-    private GAConfiguration config = null;
+    private GAConfiguration cfg;
 
     /**
-     * @param config GAConfiguration
+     * @param cfg GAConfiguration
      */
-    public MutateTask(GAConfiguration config) {
-        this.config = config;
+    public MutateTask(GAConfiguration cfg) {
+        this.cfg = cfg;
     }
 
     /**
@@ -69,47 +67,35 @@ public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
      */
     private List<Long> getMutatedGenes() {
         List<Long> mutatedGenes = new ArrayList<Long>();
-        config.getChromosomeLength();
+        cfg.getChromosomeLen();
 
-        for (int i = 0; i < config.getChromosomeLength(); i++) 
+        for (int i = 0; i < cfg.getChromosomeLen(); i++)
             mutatedGenes.add(selectGene(i));
-      
+
         return mutatedGenes;
     }
 
-    /**
-     * @param nodes List of ClusterNode
-     * @param chromosomeKeys Primary keys for respective chromosomes
-     */
-    public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
+    /** {@inheritDoc} */
+    @NotNull @Override public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
 
         Map<ComputeJob, ClusterNode> map = new HashMap<>();
         Affinity affinity = ignite.affinity(GAGridConstants.POPULATION_CACHE);
 
         for (Long key : chromosomeKeys) {
-            MutateJob ajob = new MutateJob(key, getMutatedGenes(), this.config.getMutationRate());
+            MutateJob ajob = new MutateJob(key, getMutatedGenes(), this.cfg.getMutationRate());
             ClusterNode primary = affinity.mapKeyToNode(key);
             map.put(ajob, primary);
         }
         return map;
     }
 
-    /**
-     * We return TRUE if success, else Exection is thrown.
-     *
-     * @param list List of ComputeJobResult
-     * @return Boolean value
-     */
-    public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
+    /** {@inheritDoc} */
+    @Override public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
         return Boolean.TRUE;
     }
 
-    /**
-     * @param res ComputeJobResult
-     * @param rcvd List of ComputeJobResult
-     * @return ComputeJobResultPolicy
-     */
-    public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
+    /** {@inheritDoc} */
+    @Override public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
         IgniteException err = res.getException();
 
         if (err != null)
@@ -126,8 +112,8 @@ public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
      * @return Primary key of Gene
      */
     private long selectAnyGene() {
-        int idx = selectRandomIndex(config.getGenePool().size());
-        Gene gene = config.getGenePool().get(idx);
+        int idx = selectRandomIndex(cfg.getGenePool().size());
+        Gene gene = cfg.getGenePool().get(idx);
         return gene.id();
     }
 
@@ -138,9 +124,9 @@ public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
      * @return Primary key of Gene
      */
     private long selectGene(int k) {
-        if (config.getChromosomeCriteria() == null) 
+        if (cfg.getChromosomeCriteria() == null)
             return (selectAnyGene());
-        else 
+        else
             return (selectGeneByChromsomeCriteria(k));
     }
 
@@ -155,7 +141,7 @@ public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
 
         StringBuffer sbSqlClause = new StringBuffer("_val like '");
         sbSqlClause.append("%");
-        sbSqlClause.append(config.getChromosomeCriteria().getCriteria().get(k));
+        sbSqlClause.append(cfg.getChromosomeCriteria().getCriteria().get(k));
         sbSqlClause.append("%'");
 
         IgniteCache<Long, Gene> cache = ignite.cache(GAGridConstants.GENE_CACHE);
@@ -181,8 +167,7 @@ public class MutateTask extends ComputeTaskAdapter<List<Long>, Boolean> {
      */
     private int selectRandomIndex(int sizeOfGenePool) {
         Random randomGenerator = new Random();
-        int index = randomGenerator.nextInt(sizeOfGenePool);
-        return index;
+        return randomGenerator.nextInt(sizeOfGenePool);
     }
 
 }

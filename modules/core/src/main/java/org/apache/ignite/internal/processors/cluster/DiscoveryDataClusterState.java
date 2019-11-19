@@ -25,6 +25,7 @@ import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -32,9 +33,9 @@ import org.jetbrains.annotations.Nullable;
  * baseline topology.
  * <p>
  * This object also captures a transitional cluster state, when one or more fields are changing. In this case,
- * a {@code transitionReqId} field is set to a non-null value and {@code prevState} captures previous cluster state.
+ * a {@code transitionReqId} field is set to a non-null value and {@code previousBaselineTopology} captures previous cluster state.
  * A joining node catching the cluster in an intermediate state will observe {@code transitionReqId} field to be
- * non-null, however the {@code prevState} will not be sent to the joining node.
+ * non-null, however the {@code previousBaselineTopology} will not be sent to the joining node.
  *
  * TODO https://issues.apache.org/jira/browse/IGNITE-7640 This class must be immutable, transitionRes must be set by calling finish().
  */
@@ -44,6 +45,12 @@ public class DiscoveryDataClusterState implements Serializable {
 
     /** Flag indicating if the cluster in in active state. */
     private final boolean active;
+
+    /** Flag indicating if the cluster in read-only mode. */
+    private final boolean readOnly;
+
+    /** Read-only mode change time. Correctly work's only for enabling read-only mode. */
+    private final long readOnlyChangeTime;
 
     /** Current cluster baseline topology. */
     @Nullable private final BaselineTopology baselineTopology;
@@ -79,16 +86,24 @@ public class DiscoveryDataClusterState implements Serializable {
     /** Transition result error. */
     private transient volatile Exception transitionError;
 
+    /** Local baseline autoadjustment flag. */
+    private transient volatile boolean locBaselineAutoAdjustment;
+
     /**
      * @param active Current status.
      * @return State instance.
      */
-    static DiscoveryDataClusterState createState(boolean active, @Nullable BaselineTopology baselineTopology) {
-        return new DiscoveryDataClusterState(null, active, baselineTopology, null, null, null);
+    static DiscoveryDataClusterState createState(
+        boolean active,
+        boolean readOnly,
+        @Nullable BaselineTopology baselineTopology
+    ) {
+        return new DiscoveryDataClusterState(null, active, readOnly, baselineTopology, null, null, null);
     }
 
     /**
      * @param active New status.
+     * @param readOnly New read-only mode.
      * @param transitionReqId State change request ID.
      * @param transitionTopVer State change topology version.
      * @param transitionNodes Nodes participating in state change exchange.
@@ -97,6 +112,7 @@ public class DiscoveryDataClusterState implements Serializable {
     static DiscoveryDataClusterState createTransitionState(
         DiscoveryDataClusterState prevState,
         boolean active,
+        boolean readOnly,
         @Nullable BaselineTopology baselineTopology,
         UUID transitionReqId,
         AffinityTopologyVersion transitionTopVer,
@@ -110,15 +126,18 @@ public class DiscoveryDataClusterState implements Serializable {
         return new DiscoveryDataClusterState(
             prevState,
             active,
+            readOnly,
             baselineTopology,
             transitionReqId,
             transitionTopVer,
-            transitionNodes);
+            transitionNodes
+        );
     }
 
     /**
      * @param prevState Previous state. May be non-null only for transitional states.
      * @param active New state.
+     * @param readOnly New read-only mode.
      * @param transitionReqId State change request ID.
      * @param transitionTopVer State change topology version.
      * @param transitionNodes Nodes participating in state change exchange.
@@ -126,6 +145,7 @@ public class DiscoveryDataClusterState implements Serializable {
     private DiscoveryDataClusterState(
         DiscoveryDataClusterState prevState,
         boolean active,
+        boolean readOnly,
         @Nullable BaselineTopology baselineTopology,
         @Nullable UUID transitionReqId,
         @Nullable AffinityTopologyVersion transitionTopVer,
@@ -133,6 +153,8 @@ public class DiscoveryDataClusterState implements Serializable {
     ) {
         this.prevState = prevState;
         this.active = active;
+        this.readOnly = readOnly;
+        this.readOnlyChangeTime = U.currentTimeMillis();
         this.baselineTopology = baselineTopology;
         this.transitionReqId = transitionReqId;
         this.transitionTopVer = transitionTopVer;
@@ -173,13 +195,6 @@ public class DiscoveryDataClusterState implements Serializable {
     }
 
     /**
-     * @return {@code True} if cluster active state change is in progress, {@code false} otherwise.
-     */
-    public boolean activeStateChanging() {
-        return transition() && (prevState == null || (prevState.active != active));
-    }
-
-    /**
      * @return State change exchange version.
      */
     public AffinityTopologyVersion transitionTopologyVersion() {
@@ -194,10 +209,48 @@ public class DiscoveryDataClusterState implements Serializable {
     }
 
     /**
+     * @return Read only mode enabled flag.
+     */
+    public boolean readOnly() {
+        return readOnly;
+    }
+
+    /**
+     * @return Change time read-only mode.
+     */
+    public long readOnlyModeChangeTime() {
+        return readOnlyChangeTime;
+    }
+
+    /**
      * @return Baseline topology.
      */
     @Nullable public BaselineTopology baselineTopology() {
         return baselineTopology;
+    }
+
+    /**
+     * @return Previous Baseline topology.
+     */
+    @Nullable public BaselineTopology previousBaselineTopology() {
+        return prevState != null ? prevState.baselineTopology() : null;
+    }
+
+    /**
+     *
+     * @return {@code True} If baseLine changed, {@code False} if not.
+     */
+    public boolean baselineChanged() {
+        BaselineTopology prevBLT = previousBaselineTopology();
+        BaselineTopology curBLT = baselineTopology();
+
+        if (prevBLT == null && curBLT != null)
+            return true;
+
+        if (prevBLT!= null && curBLT != null)
+            return !prevBLT.equals(curBLT);
+
+        return false;
     }
 
     /**
@@ -229,6 +282,24 @@ public class DiscoveryDataClusterState implements Serializable {
     }
 
     /**
+     * @return {@code true} if current state was created as a result of local baseline autoadjustment with zero timeout
+     *      on in-memory cluster.
+     */
+    public boolean localBaselineAutoAdjustment() {
+        return locBaselineAutoAdjustment;
+    }
+
+    /**
+     * Set local baseline autoadjustment flag.
+     *
+     * @param adjusted Flag value.
+     * @see #localBaselineAutoAdjustment()
+     */
+    public void localBaselineAutoAdjustment(boolean adjusted) {
+        locBaselineAutoAdjustment = adjusted;
+    }
+
+    /**
      * Creates a non-transitional cluster state. This method effectively cleans all fields identifying the
      * state as transitional and creates a new state with the state transition result.
      *
@@ -240,12 +311,13 @@ public class DiscoveryDataClusterState implements Serializable {
             new DiscoveryDataClusterState(
                 null,
                 active,
+                readOnly,
                 baselineTopology,
                 null,
                 null,
                 null
             ) :
-            prevState;
+            prevState != null ? prevState : createState(false, false, null);
     }
 
     /** {@inheritDoc} */

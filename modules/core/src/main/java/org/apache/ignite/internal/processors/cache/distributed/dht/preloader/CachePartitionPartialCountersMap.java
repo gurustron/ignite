@@ -34,7 +34,7 @@ public class CachePartitionPartialCountersMap implements Serializable {
     private static final long serialVersionUID = 0L;
 
     /** */
-    static final IgniteProductVersion PARTIAL_COUNTERS_MAP_SINCE = IgniteProductVersion.fromString("2.1.4");
+    public static final IgniteProductVersion PARTIAL_COUNTERS_MAP_SINCE = IgniteProductVersion.fromString("2.1.4");
 
     /** */
     public static final CachePartitionPartialCountersMap EMPTY = new CachePartitionPartialCountersMap();
@@ -53,7 +53,7 @@ public class CachePartitionPartialCountersMap implements Serializable {
 
     /** */
     private CachePartitionPartialCountersMap() {
-        // Empty map.
+        this(0);
     }
 
     /**
@@ -131,8 +131,7 @@ public class CachePartitionPartialCountersMap implements Serializable {
     }
 
     /**
-     * Cuts the array sizes according to curIdx. No more entries can be added to this map
-     * after this method is called.
+     * Cuts the array sizes according to curIdx. No more entries can be added to this map after this method is called.
      */
     public void trim() {
         if (partIds != null && curIdx < partIds.length) {
@@ -188,7 +187,6 @@ public class CachePartitionPartialCountersMap implements Serializable {
         return updCntrs[idx];
     }
 
-
     /**
      * @param cntrsMap Partial local counters map.
      * @return Partition ID to partition counters map.
@@ -225,7 +223,7 @@ public class CachePartitionPartialCountersMap implements Serializable {
     }
 
     /** {@inheritDoc} */
-    public String toString() {
+    @Override public String toString() {
         StringBuilder sb = new StringBuilder("CachePartitionPartialCountersMap {");
 
         for (int i = 0; i < partIds.length; i++) {

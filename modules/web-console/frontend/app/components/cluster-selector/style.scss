@@ -25,9 +25,12 @@ cluster-selector {
     align-items: center;
     justify-content: space-between;
 
-	& > .btn-ignite {
+	.btn-ignite.btn-ignite--primary,
+    .btn-ignite.btn-ignite--success {
         border-radius: 9px;
         min-height: 0;
+
+        color: white;
         font-size: 12px;
         font-weight: bold;
         line-height: 17px;
@@ -46,7 +49,6 @@ cluster-selector {
 
     div {
         margin: 0 10px 0 20px;
-        font-family: Roboto;
         font-size: 12px;
     }
 
@@ -58,6 +60,12 @@ cluster-selector {
     [ignite-icon='info'] {
         margin-left: 7px;
         color: $ignite-brand-success;
+    }
+
+    [ignite-icon='lockClosed'], [ignite-icon='lockOpened'] {
+        margin-right: 5px;
+        height: 10px;
+        width: 8px;
     }
 
     .bs-select-menu {

@@ -58,7 +58,6 @@ public class MockWalIteratorFactory {
     /** Segments count in work dir. */
     private int segments;
 
-
     /**
      * Creates factory
      * @param log Logger.
@@ -78,6 +77,7 @@ public class MockWalIteratorFactory {
         this.subfolderName = subfolderName;
         this.segments = segments;
     }
+
     /**
      * Creates iterator
      * @param wal WAL directory without node consistent id
@@ -94,6 +94,7 @@ public class MockWalIteratorFactory {
         when(persistentCfg1.getWalSegments()).thenReturn(segments);
         when(persistentCfg1.getWalBufferSize()).thenReturn(DataStorageConfiguration.DFLT_WAL_BUFF_SIZE);
         when(persistentCfg1.getWalRecordIteratorBufferSize()).thenReturn(DataStorageConfiguration.DFLT_WAL_RECORD_ITERATOR_BUFFER_SIZE);
+        when(persistentCfg1.getWalSegmentSize()).thenReturn(DataStorageConfiguration.DFLT_WAL_SEGMENT_SIZE);
 
         final FileIOFactory fileIOFactory = new DataStorageConfiguration().getFileIOFactory();
         when(persistentCfg1.getFileIOFactory()).thenReturn(fileIOFactory);

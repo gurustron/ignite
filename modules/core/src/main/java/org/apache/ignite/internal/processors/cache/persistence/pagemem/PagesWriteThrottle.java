@@ -16,10 +16,13 @@
 */
 package org.apache.ignite.internal.processors.cache.persistence.pagemem;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointLockStateChecker;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointWriteProgressSupplier;
+import org.apache.ignite.internal.util.typedef.internal.U;
 
 /**
  * Throttles threads that generate dirty pages during ongoing checkpoint.
@@ -44,27 +47,39 @@ public class PagesWriteThrottle implements PagesWriteThrottlePolicy {
     /** Backoff ratio. Each next park will be this times longer. */
     private static final double BACKOFF_RATIO = 1.05;
 
+    /** Checkpoint buffer fullfill upper bound. */
+    private static final float CP_BUF_FILL_THRESHOLD = 2f / 3;
+
     /** Counter for dirty pages ratio throttling. */
     private final AtomicInteger notInCheckpointBackoffCntr = new AtomicInteger(0);
 
     /** Counter for checkpoint buffer usage ratio throttling (we need a separate one due to IGNITE-7751). */
     private final AtomicInteger inCheckpointBackoffCntr = new AtomicInteger(0);
 
+    /** Logger. */
+    private IgniteLogger log;
+
+    /** Threads that are throttled due to checkpoint buffer overflow. */
+    private final ConcurrentHashMap<Long, Thread> cpBufThrottledThreads = new ConcurrentHashMap<>();
+
     /**
      * @param pageMemory Page memory.
      * @param cpProgress Database manager.
      * @param stateChecker checkpoint lock state checker.
      * @param throttleOnlyPagesInCheckpoint If true, throttle will only protect from checkpoint buffer overflow.
+     * @param log Logger.
      */
     public PagesWriteThrottle(PageMemoryImpl pageMemory,
         CheckpointWriteProgressSupplier cpProgress,
         CheckpointLockStateChecker stateChecker,
-        boolean throttleOnlyPagesInCheckpoint
+        boolean throttleOnlyPagesInCheckpoint,
+        IgniteLogger log
     ) {
         this.pageMemory = pageMemory;
         this.cpProgress = cpProgress;
         this.stateChecker = stateChecker;
         this.throttleOnlyPagesInCheckpoint = throttleOnlyPagesInCheckpoint;
+        this.log = log;
 
         if (!throttleOnlyPagesInCheckpoint)
             assert cpProgress != null : "cpProgress must be not null if ratio based throttling mode is used";
@@ -76,11 +91,8 @@ public class PagesWriteThrottle implements PagesWriteThrottlePolicy {
 
         boolean shouldThrottle = false;
 
-        if (isPageInCheckpoint) {
-            int checkpointBufLimit = pageMemory.checkpointBufferPagesSize() * 2 / 3;
-
-            shouldThrottle = pageMemory.checkpointBufferPagesCount() > checkpointBufLimit;
-        }
+        if (isPageInCheckpoint)
+            shouldThrottle = shouldThrottle();
 
         if (!shouldThrottle && !throttleOnlyPagesInCheckpoint) {
             AtomicInteger writtenPagesCntr = cpProgress.writtenPagesCounter();
@@ -111,10 +123,48 @@ public class PagesWriteThrottle implements PagesWriteThrottlePolicy {
         if (shouldThrottle) {
             int throttleLevel = cntr.getAndIncrement();
 
-            LockSupport.parkNanos((long)(STARTING_THROTTLE_NANOS * Math.pow(BACKOFF_RATIO, throttleLevel)));
+            long throttleParkTimeNs = (long) (STARTING_THROTTLE_NANOS * Math.pow(BACKOFF_RATIO, throttleLevel));
+
+            Thread curThread = Thread.currentThread();
+
+            if (throttleParkTimeNs > LOGGING_THRESHOLD) {
+                U.warn(log, "Parking thread=" + curThread.getName()
+                    + " for timeout(ms)=" + (throttleParkTimeNs / 1_000_000));
+            }
+
+            if (isPageInCheckpoint) {
+                cpBufThrottledThreads.put(curThread.getId(), curThread);
+
+                try {
+                    LockSupport.parkNanos(throttleParkTimeNs);
+                }
+                finally {
+                    cpBufThrottledThreads.remove(curThread.getId());
+
+                    if (throttleParkTimeNs > LOGGING_THRESHOLD) {
+                        U.warn(log, "Unparking thread=" + curThread.getName()
+                            + " with park timeout(ms)=" + (throttleParkTimeNs / 1_000_000));
+                    }
+                }
+            }
+            else
+                LockSupport.parkNanos(throttleParkTimeNs);
         }
-        else
-            cntr.set(0);
+        else {
+            int oldCntr = cntr.getAndSet(0);
+
+            if (isPageInCheckpoint && oldCntr != 0)
+                cpBufThrottledThreads.values().forEach(LockSupport::unpark);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void tryWakeupThrottledThreads() {
+        if (!shouldThrottle()) {
+            inCheckpointBackoffCntr.set(0);
+
+            cpBufThrottledThreads.values().forEach(LockSupport::unpark);
+        }
     }
 
     /** {@inheritDoc} */
@@ -126,5 +176,14 @@ public class PagesWriteThrottle implements PagesWriteThrottlePolicy {
         inCheckpointBackoffCntr.set(0);
 
         notInCheckpointBackoffCntr.set(0);
+    }
+
+    /**
+     * @return {@code True} if throttling should be enabled, and {@code False} otherwise.
+     */
+    private boolean shouldThrottle() {
+        int checkpointBufLimit = (int)(pageMemory.checkpointBufferPagesSize() * CP_BUF_FILL_THRESHOLD);
+
+        return pageMemory.checkpointBufferPagesCount() > checkpointBufLimit;
     }
 }

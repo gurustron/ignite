@@ -80,7 +80,7 @@ namespace Apache.Ignite.Core.Tests
         {
             using (Ignition.Start(TestUtils.GetTestConfiguration()))
             {
-                Assert.IsTrue(_outSb.ToString().Contains("[ver=1, servers=1, clients=0,"));
+                Assert.AreEqual(1, Regex.Matches(_outSb.ToString(), "ver=1, locNode=[a-fA-F0-9]{8,8}, servers=1, clients=0,").Count);
             }
         }
 
@@ -124,7 +124,7 @@ namespace Apache.Ignite.Core.Tests
             // Run test in new process because JVM is initialized only once.
             const string envVar = "ConsoleRedirectTest.TestDisabledRedirect";
 
-            if (Environment.GetEnvironmentVariable(envVar) == "true")
+            if (Environment.GetEnvironmentVariable(envVar) == bool.TrueString)
             {
                 var cfg = new IgniteConfiguration(TestUtils.GetTestConfiguration(false));
                 Assert.IsTrue(cfg.RedirectJavaConsoleOutput);
@@ -133,14 +133,16 @@ namespace Apache.Ignite.Core.Tests
 
                 using (Ignition.Start(cfg))
                 {
-                    Assert.AreEqual("", _errSb.ToString());
-                    Assert.AreEqual("", _outSb.ToString());
+                    Assert.AreEqual(string.Empty, _errSb.ToString());
+                    Assert.AreEqual(string.Empty, _outSb.ToString());
                 }
             }
             else
             {
-                Environment.SetEnvironmentVariable(envVar, "true");
-                TestUtils.RunTestInNewProcess(GetType().FullName, "TestDisabledRedirect");
+                using (EnvVar.Set(envVar, bool.TrueString))
+                {
+                    TestUtils.RunTestInNewProcess(GetType().FullName, "TestDisabledRedirect");
+                }
             }
         }
 
@@ -152,7 +154,7 @@ namespace Apache.Ignite.Core.Tests
         {
             using (var ignite = Ignition.Start(TestUtils.GetTestConfiguration()))
             {
-                Assert.IsTrue(_outSb.ToString().Contains("[ver=1, servers=1, clients=0,"));
+                Assert.AreEqual(1, Regex.Matches(_outSb.ToString(), "ver=1, locNode=[a-fA-F0-9]{8,8}, servers=1, clients=0,").Count);
 
                 // Run twice
                 RunInNewDomain();
@@ -166,10 +168,10 @@ namespace Apache.Ignite.Core.Tests
                 Assert.AreEqual(4, Regex.Matches(outTxt, ">>> Ignite instance name: newDomainGrid").Count);
 
                 // Both domains produce the topology snapshot on node enter
-                Assert.AreEqual(2, Regex.Matches(outTxt, "ver=2, servers=2, clients=0,").Count);
-                Assert.AreEqual(1, Regex.Matches(outTxt, "ver=3, servers=1, clients=0,").Count);
-                Assert.AreEqual(2, Regex.Matches(outTxt, "ver=4, servers=2, clients=0,").Count);
-                Assert.AreEqual(1, Regex.Matches(outTxt, "ver=5, servers=1, clients=0,").Count);
+                Assert.AreEqual(2, Regex.Matches(outTxt, "ver=2, locNode=[a-fA-F0-9]{8,8}, servers=2, clients=0,").Count);
+                Assert.AreEqual(1, Regex.Matches(outTxt, "ver=3, locNode=[a-fA-F0-9]{8,8}, servers=1, clients=0,").Count);
+                Assert.AreEqual(2, Regex.Matches(outTxt, "ver=4, locNode=[a-fA-F0-9]{8,8}, servers=2, clients=0,").Count);
+                Assert.AreEqual(1, Regex.Matches(outTxt, "ver=5, locNode=[a-fA-F0-9]{8,8}, servers=1, clients=0,").Count);
             }
         }
 

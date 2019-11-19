@@ -20,10 +20,6 @@
 #include <vector>
 #include <string>
 
-#ifndef _MSC_VER
-#   define BOOST_TEST_DYN_LINK
-#endif
-
 #include <boost/regex.hpp>
 #include <boost/test/unit_test.hpp>
 
@@ -32,7 +28,7 @@
 
 #include "test_utils.h"
 #include "odbc_test_suite.h"
-#include "../../core-test/include/ignite/test_type.h"
+#include "test_type.h"
 
 using namespace ignite;
 using namespace ignite::common;
@@ -56,7 +52,7 @@ struct AuthenticationTestSuiteFixture : odbc::OdbcTestSuite
 {
     static Ignite StartAdditionalNode(const char* name)
     {
-        return StartTestNode("queries-auth.xml", name);
+        return StartPlatformNode("queries-auth.xml", name);
     }
 
     /**
@@ -65,11 +61,11 @@ struct AuthenticationTestSuiteFixture : odbc::OdbcTestSuite
     AuthenticationTestSuiteFixture() :
         OdbcTestSuite()
     {
+        ClearLfs();
+
         grid = StartAdditionalNode("NodeMain");
 
         grid.SetActive(true);
-
-        grid.GetCache<int64_t, TestType>("cache").Clear();
     }
 
     /**
@@ -77,9 +73,7 @@ struct AuthenticationTestSuiteFixture : odbc::OdbcTestSuite
      */
     virtual ~AuthenticationTestSuiteFixture()
     {
-        ExecQuery("DROP USER test");
-
-        grid.GetCache<int64_t, TestType>("cache").Clear();
+        // No-op.
     }
 
     /**
@@ -138,8 +132,6 @@ BOOST_AUTO_TEST_CASE(TestConnectionAuthReject)
 BOOST_AUTO_TEST_CASE(TestConnectionUserOperationsQuery)
 {
     Connect(MakeDefaultConnectionString());
-
-    ExecQuery("DROP USER \"test\"");
 
     SQLRETURN ret = ExecQuery("CREATE USER \"test\" WITH PASSWORD 'somePass'");
 

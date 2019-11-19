@@ -17,14 +17,18 @@
 
 package org.apache.ignite.ml.tree;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import org.apache.ignite.ml.dataset.feature.extractor.impl.DoubleArrayVectorizer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.*;
-
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for {@link DecisionTreeRegressionTrainer}.
@@ -35,14 +39,21 @@ public class DecisionTreeRegressionTrainerTest {
     private static final int[] partsToBeTested = new int[] {1, 2, 3, 4, 5, 7};
 
     /** Number of partitions. */
-    @Parameterized.Parameter
+    @Parameterized.Parameter()
     public int parts;
 
-    @Parameterized.Parameters(name = "Data divided on {0} partitions")
+    /** Use index [= 1 if true]. */
+    @Parameterized.Parameter(1)
+    public int useIdx;
+
+    /** Test parameters. */
+    @Parameterized.Parameters(name = "Data divided on {0} partitions. Use index = {1}.")
     public static Iterable<Integer[]> data() {
         List<Integer[]> res = new ArrayList<>();
-        for (int part : partsToBeTested)
-            res.add(new Integer[] {part});
+        for (int i = 0; i < 2; i++) {
+            for (int part : partsToBeTested)
+                res.add(new Integer[] {part, i});
+        }
 
         return res;
     }
@@ -60,14 +71,10 @@ public class DecisionTreeRegressionTrainerTest {
             data.put(i, new double[]{x, x > 0 ? 1 : 0});
         }
 
-        DecisionTreeRegressionTrainer trainer = new DecisionTreeRegressionTrainer(1, 0);
+        DecisionTreeRegressionTrainer trainer = new DecisionTreeRegressionTrainer(1, 0)
+            .withUsingIdx(useIdx == 1);
 
-        DecisionTreeNode tree = trainer.fit(
-            data,
-            parts,
-            (k, v) -> Arrays.copyOf(v, v.length - 1),
-            (k, v) -> v[v.length - 1]
-        );
+        DecisionTreeNode tree = trainer.fit(data, parts, new DoubleArrayVectorizer<Integer>().labeled(1));
 
         assertTrue(tree instanceof DecisionTreeConditionalNode);
 

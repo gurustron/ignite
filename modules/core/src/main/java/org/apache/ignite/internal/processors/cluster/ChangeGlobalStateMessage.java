@@ -25,6 +25,7 @@ import org.apache.ignite.internal.managers.discovery.GridDiscoveryManager;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.ExchangeActions;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
+import org.apache.ignite.internal.processors.service.ServiceDeploymentActions;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteUuid;
@@ -49,6 +50,9 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
     /** If true activate else deactivate. */
     private boolean activate;
 
+    /** If true read-only mode. */
+    private boolean readOnly;
+
     /** Configurations read from persistent store. */
     private List<StoredCacheData> storedCfgs;
 
@@ -65,17 +69,26 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
     @GridToStringExclude
     private transient ExchangeActions exchangeActions;
 
+    /** Services deployment actions to be processed on services deployment process. */
+    @GridToStringExclude
+    @Nullable private transient ServiceDeploymentActions serviceDeploymentActions;
+
     /**
      * @param reqId State change request ID.
      * @param initiatingNodeId Node initiated state change.
      * @param storedCfgs Configurations read from persistent store.
      * @param activate New cluster state.
+     * @param readOnly New read-only mode flag.
+     * @param baselineTopology Baseline topology.
+     * @param forceChangeBaselineTopology Force change baseline topology flag.
+     * @param timestamp Timestamp.
      */
     public ChangeGlobalStateMessage(
         UUID reqId,
         UUID initiatingNodeId,
         @Nullable List<StoredCacheData> storedCfgs,
         boolean activate,
+        boolean readOnly,
         BaselineTopology baselineTopology,
         boolean forceChangeBaselineTopology,
         long timestamp
@@ -87,6 +100,7 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
         this.initiatingNodeId = initiatingNodeId;
         this.storedCfgs = storedCfgs;
         this.activate = activate;
+        this.readOnly = readOnly;
         this.baselineTopology = baselineTopology;
         this.forceChangeBaselineTopology = forceChangeBaselineTopology;
         this.timestamp = timestamp;
@@ -115,6 +129,20 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
         this.exchangeActions = exchangeActions;
     }
 
+    /**
+     * @return Services deployment actions to be processed on services deployment process.
+     */
+    @Nullable public ServiceDeploymentActions servicesDeploymentActions() {
+        return serviceDeploymentActions;
+    }
+
+    /**
+     * @param serviceDeploymentActions Services deployment actions to be processed on services deployment process.
+     */
+    public void servicesDeploymentActions(ServiceDeploymentActions serviceDeploymentActions) {
+        this.serviceDeploymentActions = serviceDeploymentActions;
+    }
+
     /** {@inheritDoc} */
     @Override public IgniteUuid id() {
         return id;
@@ -136,14 +164,17 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
     }
 
     /** {@inheritDoc} */
-    @Override public DiscoCache createDiscoCache(GridDiscoveryManager mgr, AffinityTopologyVersion topVer,
-        DiscoCache discoCache) {
+    @Override public DiscoCache createDiscoCache(
+        GridDiscoveryManager mgr,
+        AffinityTopologyVersion topVer,
+        DiscoCache discoCache
+    ) {
         return mgr.createDiscoCacheOnCacheChange(topVer, discoCache);
     }
 
     /**
-    * @return Node initiated state change.
-    */
+     * @return Node initiated state change.
+     */
     public UUID initiatorNodeId() {
         return initiatingNodeId;
     }
@@ -153,6 +184,13 @@ public class ChangeGlobalStateMessage implements DiscoveryCustomMessage {
      */
     public boolean activate() {
         return activate;
+    }
+
+    /**
+     * @return Read-only mode flag.
+     */
+    public boolean readOnly() {
+        return readOnly;
     }
 
     /**

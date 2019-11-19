@@ -17,160 +17,76 @@
 
 package org.apache.ignite.ml.knn.classification;
 
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.apache.ignite.ml.Exportable;
-import org.apache.ignite.ml.Exporter;
-import org.apache.ignite.ml.Model;
 import org.apache.ignite.ml.dataset.Dataset;
 import org.apache.ignite.ml.dataset.primitive.context.EmptyContext;
-import org.apache.ignite.ml.math.Vector;
+import org.apache.ignite.ml.knn.KNNModel;
+import org.apache.ignite.ml.knn.utils.indices.SpatialIndex;
 import org.apache.ignite.ml.math.distances.DistanceMeasure;
-import org.apache.ignite.ml.math.distances.EuclideanDistance;
-import org.apache.ignite.ml.structures.LabeledDataset;
+import org.apache.ignite.ml.math.primitives.vector.Vector;
 import org.apache.ignite.ml.structures.LabeledVector;
-import org.jetbrains.annotations.NotNull;
 
 /**
- * kNN algorithm model to solve multi-class classification task.
+ * KNN classification model. Be aware that this model is linked with cluster environment it's been built on and can't
+ * be saved or used in other places. Under the hood it keeps {@link Dataset} that consists of a set of resources
+ * allocated across the cluster.
  */
-public class KNNClassificationModel<K, V> implements Model<Vector, Double>, Exportable<KNNModelFormat> {
-    /** */
-    private static final long serialVersionUID = -127386523291350345L;
-
-    /** Amount of nearest neighbors. */
-    protected int k = 5;
-
-    /** Distance measure. */
-    protected DistanceMeasure distanceMeasure = new EuclideanDistance();
-
-    /** kNN strategy. */
-    protected KNNStrategy stgy = KNNStrategy.SIMPLE;
-
-    /** Dataset. */
-    private Dataset<EmptyContext, LabeledDataset<Double, LabeledVector>> dataset;
-
+public class KNNClassificationModel extends KNNModel<Double> {
     /**
-     * Builds the model via prepared dataset.
-     * @param dataset Specially prepared object to run algorithm over it.
-     */
-    public KNNClassificationModel(Dataset<EmptyContext, LabeledDataset<Double, LabeledVector>> dataset) {
-        this.dataset = dataset;
-    }
-
-    /** {@inheritDoc} */
-    @Override public Double apply(Vector v) {
-        if(dataset != null) {
-            List<LabeledVector> neighbors = findKNearestNeighbors(v);
-
-            return classify(neighbors, v, stgy);
-        } else
-            throw new IllegalStateException("The train kNN dataset is null");
-    }
-
-    /** */
-    @Override public <P> void saveModel(Exporter<KNNModelFormat, P> exporter, P path) {
-        KNNModelFormat mdlData = new KNNModelFormat(k, distanceMeasure, stgy);
-        exporter.save(mdlData, path);
-    }
-
-    /**
-     * Set up parameter of the kNN model.
-     * @param k Amount of nearest neighbors.
-     * @return Model.
-     */
-    public KNNClassificationModel<K, V> withK(int k) {
-        this.k = k;
-        return this;
-    }
-
-    /**
-     * Set up parameter of the kNN model.
-     * @param stgy Strategy of calculations.
-     * @return Model.
-     */
-    public KNNClassificationModel<K, V> withStrategy(KNNStrategy stgy) {
-        this.stgy = stgy;
-        return this;
-    }
-
-    /**
-     * Set up parameter of the kNN model.
+     * Constructs a new instance of KNN classification model.
+     *
+     * @param dataset Dataset with {@link SpatialIndex} as a partition data.
      * @param distanceMeasure Distance measure.
-     * @return Model.
+     * @param k Number of neighbours.
+     * @param weighted Weighted or not.
      */
-    public KNNClassificationModel<K, V> withDistanceMeasure(DistanceMeasure distanceMeasure) {
-        this.distanceMeasure = distanceMeasure;
-        return this;
+    KNNClassificationModel(Dataset<EmptyContext, SpatialIndex<Double>> dataset, DistanceMeasure distanceMeasure, int k,
+        boolean weighted) {
+        super(dataset, distanceMeasure, k, weighted);
+    }
+
+    /** {@inheritDoc} */
+    @Override public Double predict(Vector input) {
+        List<LabeledVector<Double>> neighbors = findKClosest(k, input);
+
+        return election(neighbors, input);
     }
 
     /**
-     * The main idea is calculation all distance pairs between given vector and all vectors in training set, sorting
-     * them and finding k vectors with min distance with the given vector.
+     * Elects a label with max votes for it.
      *
-     * @param v The given vector.
-     * @return K-nearest neighbors.
+     * @param neighbours List of neighbours with different labels.
+     * @param pnt Point to calculate distance to.
+     * @return Label with max votes for it.
      */
-    protected List<LabeledVector> findKNearestNeighbors(Vector v) {
-        List<LabeledVector> neighborsFromPartitions = dataset.compute(data -> {
-            TreeMap<Double, Set<Integer>> distanceIdxPairs = getDistances(v, data);
-            return Arrays.asList(getKClosestVectors(data, distanceIdxPairs));
-        }, (a, b) -> a == null ? b : Stream.concat(a.stream(), b.stream()).collect(Collectors.toList()));
+    private Double election(List<LabeledVector<Double>> neighbours, Vector pnt) {
+        Collection<GroupedNeighbours> groups = groupByLabel(neighbours);
 
-        LabeledDataset<Double, LabeledVector> neighborsToFilter = buildLabeledDatasetOnListOfVectors(neighborsFromPartitions);
-
-        return Arrays.asList(getKClosestVectors(neighborsToFilter, getDistances(v, neighborsToFilter)));
-    }
-
-
-    /** */
-    private LabeledDataset<Double, LabeledVector> buildLabeledDatasetOnListOfVectors(
-        List<LabeledVector> neighborsFromPartitions) {
-        LabeledVector[] arr = new LabeledVector[neighborsFromPartitions.size()];
-        for (int i = 0; i < arr.length; i++)
-            arr[i] = neighborsFromPartitions.get(i);
-
-        return new LabeledDataset<Double, LabeledVector>(arr);
+        return election(groups, pnt);
     }
 
     /**
-     * Iterates along entries in distance map and fill the resulting k-element array.
+     * Elects a label with max votes for it.
      *
-     * @param trainingData The training data.
-     * @param distanceIdxPairs The distance map.
-     * @return K-nearest neighbors.
+     * @param groups Groups of neighbours (each group contains neighbours with the same label).
+     * @param pnt Point to calculate distance to.
+     * @return Label with max votes for it.
      */
-    @NotNull private LabeledVector[] getKClosestVectors(LabeledDataset<Double, LabeledVector> trainingData,
-        TreeMap<Double, Set<Integer>> distanceIdxPairs) {
-        LabeledVector[] res;
+    private Double election(Collection<GroupedNeighbours> groups, Vector pnt) {
+        Double res = null;
+        double votes = 0.0;
 
-        if (trainingData.rowSize() <= k) {
-            res = new LabeledVector[trainingData.rowSize()];
-            for (int i = 0; i < trainingData.rowSize(); i++)
-                res[i] = trainingData.getRow(i);
-        }
-        else {
-            res = new LabeledVector[k];
-            int i = 0;
-            final Iterator<Double> iter = distanceIdxPairs.keySet().iterator();
-            while (i < k) {
-                double key = iter.next();
-                Set<Integer> idxs = distanceIdxPairs.get(key);
-                for (Integer idx : idxs) {
-                    res[i] = trainingData.getRow(idx);
-                    i++;
-                    if (i >= k)
-                        break; // go to next while-loop iteration
-                }
+        for (GroupedNeighbours groupedNeighbours : groups) {
+            double grpVotes = calculateGroupVotes(groupedNeighbours, pnt);
+            if (grpVotes > votes) {
+                votes = grpVotes;
+                res = groupedNeighbours.getLb();
             }
         }
 
@@ -178,96 +94,88 @@ public class KNNClassificationModel<K, V> implements Model<Vector, Double>, Expo
     }
 
     /**
-     * Computes distances between given vector and each vector in training dataset.
+     * Calculate votes of the specific {@link GroupedNeighbours} group.
      *
-     * @param v The given vector.
-     * @param trainingData The training dataset.
-     * @return Key - distanceMeasure from given features before features with idx stored in value. Value is presented
-     * with Set because there can be a few vectors with the same distance.
+     * @param grp Groupd of neighbours with the same label.
+     * @param pnt Point to calculate distance to.
+     * @return Total vote for the label of the given group.
      */
-    @NotNull private TreeMap<Double, Set<Integer>> getDistances(Vector v, LabeledDataset<Double, LabeledVector> trainingData) {
-        TreeMap<Double, Set<Integer>> distanceIdxPairs = new TreeMap<>();
+    private Double calculateGroupVotes(GroupedNeighbours grp, Vector pnt) {
+        double res = 0;
 
-        for (int i = 0; i < trainingData.rowSize(); i++) {
-
-            LabeledVector labeledVector = trainingData.getRow(i);
-            if (labeledVector != null) {
-                double distance = distanceMeasure.compute(v, labeledVector.features());
-                putDistanceIdxPair(distanceIdxPairs, i, distance);
-            }
+        for (Vector neighbour : grp) {
+            double distance = distanceMeasure.compute(pnt, neighbour);
+            double vote = weighted ? 1.0 / distance : 1.0;
+            res += vote;
         }
-        return distanceIdxPairs;
-    }
-
-    /** */
-    private void putDistanceIdxPair(Map<Double, Set<Integer>> distanceIdxPairs, int i, double distance) {
-        if (distanceIdxPairs.containsKey(distance)) {
-            Set<Integer> idxs = distanceIdxPairs.get(distance);
-            idxs.add(i);
-        }
-        else {
-            Set<Integer> idxs = new HashSet<>();
-            idxs.add(i);
-            distanceIdxPairs.put(distance, idxs);
-        }
-    }
-
-    /** */
-    private double classify(List<LabeledVector> neighbors, Vector v, KNNStrategy stgy) {
-        Map<Double, Double> clsVotes = new HashMap<>();
-
-        for (LabeledVector neighbor : neighbors) {
-            double clsLb = (double)neighbor.label();
-
-            double distance = distanceMeasure.compute(v, neighbor.features());
-
-            if (clsVotes.containsKey(clsLb)) {
-                double clsVote = clsVotes.get(clsLb);
-                clsVote += getClassVoteForVector(stgy, distance);
-                clsVotes.put(clsLb, clsVote);
-            }
-            else {
-                final double val = getClassVoteForVector(stgy, distance);
-                clsVotes.put(clsLb, val);
-            }
-        }
-        return getClassWithMaxVotes(clsVotes);
-    }
-
-    /** */
-    private double getClassWithMaxVotes(Map<Double, Double> clsVotes) {
-        return Collections.max(clsVotes.entrySet(), Map.Entry.comparingByValue()).getKey();
-    }
-
-    /** */
-    private double getClassVoteForVector(KNNStrategy stgy, double distance) {
-        if (stgy.equals(KNNStrategy.WEIGHTED))
-            return 1 / distance; // strategy.WEIGHTED
-        else
-            return 1.0; // strategy.SIMPLE
-    }
-
-    /** {@inheritDoc} */
-    @Override public int hashCode() {
-        int res = 1;
-
-        res = res * 37 + k;
-        res = res * 37 + distanceMeasure.hashCode();
-        res = res * 37 + stgy.hashCode();
 
         return res;
     }
 
-    /** {@inheritDoc} */
-    @Override public boolean equals(Object obj) {
-        if (this == obj)
-            return true;
+    /**
+     * Groups given list of neighbours represented by vectors by label on several {@link GroupedNeighbours} groups.
+     *
+     * @param neighbours List of meighbours.
+     * @return Collection of grouped neighbours (each group contains neighbours with the same label).
+     */
+    private Collection<GroupedNeighbours> groupByLabel(List<LabeledVector<Double>> neighbours) {
+        Map<Double, GroupedNeighbours> groups = new HashMap<>();
 
-        if (obj == null || getClass() != obj.getClass())
-            return false;
+        for (LabeledVector<Double> neighbour : neighbours) {
+            double lb = neighbour.label();
 
-        KNNClassificationModel that = (KNNClassificationModel)obj;
+            GroupedNeighbours groupedNeighbours = groups.get(lb);
+            if (groupedNeighbours == null) {
+                groupedNeighbours = new GroupedNeighbours(lb);
+                groups.put(lb, groupedNeighbours);
+            }
 
-        return k == that.k && distanceMeasure.equals(that.distanceMeasure) && stgy.equals(that.stgy);
+            groupedNeighbours.addNeighbour(neighbour.features());
+        }
+
+        return Collections.unmodifiableCollection(groups.values());
+    }
+
+    /**
+     * Util class that represents neighbours grouped by label (each group contains neighbours with the same label).
+     */
+    private static class GroupedNeighbours implements Iterable<Vector> {
+        /** Label. */
+        private final Double lb;
+
+        /** Neighbours. */
+        private final List<Vector> neighbours = new ArrayList<>();
+
+        /**
+         * Constructs a new instance of grouped neighbours.
+         *
+         * @param lb Label.
+         */
+        public GroupedNeighbours(Double lb) {
+            this.lb = lb;
+        }
+
+        /**
+         * Adds a new neighbour into the group.
+         *
+         * @param neighbour Neighbour.
+         */
+        public void addNeighbour(Vector neighbour) {
+            neighbours.add(neighbour);
+        }
+
+        /**
+         * Return label of the group.
+         *
+         * @return Label of the group.
+         */
+        public Double getLb() {
+            return lb;
+        }
+
+        /** {@inheritDoc} */
+        @Override public Iterator<Vector> iterator() {
+            return neighbours.iterator();
+        }
     }
 }

@@ -19,6 +19,7 @@
 namespace Apache.Ignite.Core.Tests
 {
     using System;
+    using System.Collections.Generic;
     using System.ComponentModel;
     using System.IO;
     using System.Linq;
@@ -35,6 +36,7 @@ namespace Apache.Ignite.Core.Tests
     using Apache.Ignite.Core.Discovery.Tcp;
     using Apache.Ignite.Core.Discovery.Tcp.Multicast;
     using Apache.Ignite.Core.Discovery.Tcp.Static;
+    using Apache.Ignite.Core.Encryption.Keystore;
     using Apache.Ignite.Core.Events;
     using Apache.Ignite.Core.Impl.Common;
     using Apache.Ignite.Core.PersistentStore;
@@ -80,6 +82,7 @@ namespace Apache.Ignite.Core.Tests
             CheckDefaultValueAttributes(new IgniteConfiguration());
             CheckDefaultValueAttributes(new BinaryConfiguration());
             CheckDefaultValueAttributes(new TcpDiscoverySpi());
+            CheckDefaultValueAttributes(new KeystoreEncryptionSpi());
             CheckDefaultValueAttributes(new CacheConfiguration());
             CheckDefaultValueAttributes(new TcpDiscoveryMulticastIpFinder());
             CheckDefaultValueAttributes(new TcpCommunicationSpi());
@@ -103,7 +106,7 @@ namespace Apache.Ignite.Core.Tests
         }
 
         /// <summary>
-        /// Tests all configuration properties.
+        /// Tests all configuration properties roundtrip to Java and back.
         /// </summary>
         [Test]
         public void TestAllConfigurationProperties()
@@ -130,6 +133,14 @@ namespace Apache.Ignite.Core.Tests
                 Assert.AreEqual(disco.StatisticsPrintFrequency, resDisco.StatisticsPrintFrequency);
                 Assert.AreEqual(disco.ThreadPriority, resDisco.ThreadPriority);
                 Assert.AreEqual(disco.TopologyHistorySize, resDisco.TopologyHistorySize);
+
+                var enc = (KeystoreEncryptionSpi) cfg.EncryptionSpi;
+                var resEnc = (KeystoreEncryptionSpi) resCfg.EncryptionSpi;
+                
+                Assert.AreEqual(enc.MasterKeyName, resEnc.MasterKeyName);
+                Assert.AreEqual(enc.KeySize, resEnc.KeySize);
+                Assert.AreEqual(enc.KeyStorePath, resEnc.KeyStorePath);
+                Assert.AreEqual(enc.KeyStorePassword, resEnc.KeyStorePassword);
 
                 var ip = (TcpDiscoveryStaticIpFinder) disco.IpFinder;
                 var resIp = (TcpDiscoveryStaticIpFinder) resDisco.IpFinder;
@@ -170,13 +181,16 @@ namespace Apache.Ignite.Core.Tests
                 Assert.AreEqual(tx.DefaultTransactionIsolation, resTx.DefaultTransactionIsolation);
                 Assert.AreEqual(tx.PessimisticTransactionLogLinger, resTx.PessimisticTransactionLogLinger);
                 Assert.AreEqual(tx.PessimisticTransactionLogSize, resTx.PessimisticTransactionLogSize);
+                Assert.AreEqual(tx.DefaultTimeoutOnPartitionMapExchange, resTx.DefaultTimeoutOnPartitionMapExchange);
 
                 var com = (TcpCommunicationSpi) cfg.CommunicationSpi;
                 var resCom = (TcpCommunicationSpi) resCfg.CommunicationSpi;
                 Assert.AreEqual(com.AckSendThreshold, resCom.AckSendThreshold);
+                Assert.AreEqual(com.ConnectionsPerNode, resCom.ConnectionsPerNode);
                 Assert.AreEqual(com.ConnectTimeout, resCom.ConnectTimeout);
                 Assert.AreEqual(com.DirectBuffer, resCom.DirectBuffer);
                 Assert.AreEqual(com.DirectSendBuffer, resCom.DirectSendBuffer);
+                Assert.AreEqual(com.FilterReachableAddresses, resCom.FilterReachableAddresses);
                 Assert.AreEqual(com.IdleConnectionTimeout, resCom.IdleConnectionTimeout);
                 Assert.AreEqual(com.LocalAddress, resCom.LocalAddress);
                 Assert.AreEqual(com.LocalPort, resCom.LocalPort);
@@ -185,13 +199,18 @@ namespace Apache.Ignite.Core.Tests
                 Assert.AreEqual(com.MessageQueueLimit, resCom.MessageQueueLimit);
                 Assert.AreEqual(com.ReconnectCount, resCom.ReconnectCount);
                 Assert.AreEqual(com.SelectorsCount, resCom.SelectorsCount);
+                Assert.AreEqual(com.SelectorSpins, resCom.SelectorSpins);
+                Assert.AreEqual(com.SharedMemoryPort, resCom.SharedMemoryPort);
                 Assert.AreEqual(com.SlowClientQueueLimit, resCom.SlowClientQueueLimit);
                 Assert.AreEqual(com.SocketReceiveBufferSize, resCom.SocketReceiveBufferSize);
                 Assert.AreEqual(com.SocketSendBufferSize, resCom.SocketSendBufferSize);
+                Assert.AreEqual(com.SocketWriteTimeout, resCom.SocketWriteTimeout);
                 Assert.AreEqual(com.TcpNoDelay, resCom.TcpNoDelay);
                 Assert.AreEqual(com.UnacknowledgedMessagesBufferSize, resCom.UnacknowledgedMessagesBufferSize);
-
+                Assert.AreEqual(com.UsePairedConnections, resCom.UsePairedConnections);
+                
                 Assert.AreEqual(cfg.FailureDetectionTimeout, resCfg.FailureDetectionTimeout);
+                Assert.AreEqual(cfg.SystemWorkerBlockedTimeout, resCfg.SystemWorkerBlockedTimeout);
                 Assert.AreEqual(cfg.ClientFailureDetectionTimeout, resCfg.ClientFailureDetectionTimeout);
                 Assert.AreEqual(cfg.LongQueryWarningTimeout, resCfg.LongQueryWarningTimeout);
 
@@ -239,6 +258,18 @@ namespace Apache.Ignite.Core.Tests
                 Assert.AreEqual(sql.ThreadPoolSize, resSql.ThreadPoolSize);
 
                 AssertExtensions.ReflectionEqual(cfg.DataStorageConfiguration, resCfg.DataStorageConfiguration);
+
+                Assert.AreEqual(cfg.MvccVacuumFrequency, resCfg.MvccVacuumFrequency);
+                Assert.AreEqual(cfg.MvccVacuumThreadCount, resCfg.MvccVacuumThreadCount);
+                Assert.AreEqual(cfg.SqlQueryHistorySize, resCfg.SqlQueryHistorySize);
+
+                Assert.IsNotNull(resCfg.SqlSchemas);
+                Assert.AreEqual(2, resCfg.SqlSchemas.Count);
+                Assert.IsTrue(resCfg.SqlSchemas.Contains("SCHEMA_3"));
+                Assert.IsTrue(resCfg.SqlSchemas.Contains("schema_4"));
+
+                Assert.NotNull(cfg.ExecutorConfiguration);
+                AssertExtensions.ReflectionEqual(cfg.ExecutorConfiguration, resCfg.ExecutorConfiguration);
             }
         }
 
@@ -392,7 +423,7 @@ namespace Apache.Ignite.Core.Tests
         {
             var cfg = new IgniteConfiguration(TestUtils.GetTestConfiguration())
             {
-                WorkDirectory = TestUtils.GetTempDirectoryName()
+                WorkDirectory = PathUtils.GetTempDirectoryName()
             };
 
             using (Ignition.Start(cfg))
@@ -491,6 +522,8 @@ namespace Apache.Ignite.Core.Tests
                 cfg.ClientConnectorConfigurationEnabled);
             Assert.AreEqual(IgniteConfiguration.DefaultRedirectJavaConsoleOutput, cfg.RedirectJavaConsoleOutput);
             Assert.AreEqual(IgniteConfiguration.DefaultAuthenticationEnabled, cfg.AuthenticationEnabled);
+            Assert.AreEqual(IgniteConfiguration.DefaultMvccVacuumFrequency, cfg.MvccVacuumFrequency);
+            Assert.AreEqual(IgniteConfiguration.DefaultMvccVacuumThreadCount, cfg.MvccVacuumThreadCount);
 
             // Thread pools.
             Assert.AreEqual(IgniteConfiguration.DefaultManagementThreadPoolSize, cfg.ManagementThreadPoolSize);
@@ -627,8 +660,8 @@ namespace Apache.Ignite.Core.Tests
             var props = obj.GetType().GetProperties();
 
             foreach (var prop in props.Where(p => p.Name != "SelectorsCount" && p.Name != "ReadStripesNumber" &&
-                                                  !p.Name.Contains("ThreadPoolSize") &&
-                                                  p.Name != "MaxSize"))
+                                                  !p.Name.Contains("ThreadPoolSize") && p.Name != "MaxSize" &&
+                                                  p.Name != "HandshakeTimeout" && p.Name != "ConcurrencyLevel"))
             {
                 var attr = prop.GetCustomAttributes(true).OfType<DefaultValueAttribute>().FirstOrDefault();
                 var propValue = prop.GetValue(obj, null);
@@ -672,8 +705,15 @@ namespace Apache.Ignite.Core.Tests
                     ThreadPriority = 6,
                     TopologyHistorySize = 1234567
                 },
+                EncryptionSpi = new KeystoreEncryptionSpi()
+                {
+                    KeySize = 192,
+                    KeyStorePassword = "love_sex_god",
+                    KeyStorePath = "tde.jks",
+                    MasterKeyName = KeystoreEncryptionSpi.DefaultMasterKeyName
+                },
                 IgniteInstanceName = "gridName1",
-                IgniteHome = IgniteHome.Resolve(null),
+                IgniteHome = IgniteHome.Resolve(),
                 IncludedEventTypes = EventType.DiscoveryAll,
                 MetricsExpireTime = TimeSpan.FromMinutes(7),
                 MetricsHistorySize = 125,
@@ -699,7 +739,8 @@ namespace Apache.Ignite.Core.Tests
                     DefaultTimeout = TimeSpan.FromSeconds(25),
                     DefaultTransactionIsolation = TransactionIsolation.Serializable,
                     PessimisticTransactionLogLinger = TimeSpan.FromHours(1),
-                    PessimisticTransactionLogSize = 240
+                    PessimisticTransactionLogSize = 240,
+                    DefaultTimeoutOnPartitionMapExchange = TimeSpan.FromSeconds(25)
                 },
                 CommunicationSpi = new TcpCommunicationSpi
                 {
@@ -719,9 +760,16 @@ namespace Apache.Ignite.Core.Tests
                     TcpNoDelay = false,
                     SlowClientQueueLimit = 98,
                     SocketSendBufferSize = 2045,
-                    UnacknowledgedMessagesBufferSize = 3450
+                    UnacknowledgedMessagesBufferSize = 3450,
+                    ConnectionsPerNode = 12, 
+                    UsePairedConnections = true,
+                    SharedMemoryPort = 1234,
+                    SocketWriteTimeout = 2222,
+                    SelectorSpins = 12,
+                    FilterReachableAddresses = true
                 },
                 FailureDetectionTimeout = TimeSpan.FromSeconds(3.5),
+                SystemWorkerBlockedTimeout = TimeSpan.FromSeconds(8.5),
                 ClientFailureDetectionTimeout = TimeSpan.FromMinutes(12.3),
                 LongQueryWarningTimeout = TimeSpan.FromMinutes(1.23),
                 IsActiveOnStart = true,
@@ -794,6 +842,7 @@ namespace Apache.Ignite.Core.Tests
                     ConcurrencyLevel = 1,
                     PageSize = 8 * 1024,
                     WalAutoArchiveAfterInactivity = TimeSpan.FromMinutes(5),
+                    CheckpointReadLockTimeout = TimeSpan.FromSeconds(9.5),
                     DefaultDataRegionConfiguration = new DataRegionConfiguration
                     {
                         Name = "reg1",
@@ -806,7 +855,7 @@ namespace Apache.Ignite.Core.Tests
                         PersistenceEnabled = false,
                         MetricsRateTimeInterval = TimeSpan.FromMinutes(2),
                         MetricsSubIntervalCount = 6,
-                        SwapPath = TestUtils.GetTempDirectoryName(),
+                        SwapPath = PathUtils.GetTempDirectoryName(),
                         CheckpointPageBufferSize = 28 * 1024 * 1024
                     },
                     DataRegionConfigurations = new[]
@@ -823,11 +872,23 @@ namespace Apache.Ignite.Core.Tests
                             PersistenceEnabled = false,
                             MetricsRateTimeInterval = TimeSpan.FromMinutes(3),
                             MetricsSubIntervalCount = 7,
-                            SwapPath = TestUtils.GetTempDirectoryName()
+                            SwapPath = PathUtils.GetTempDirectoryName()
                         }
                     }
                 },
-                AuthenticationEnabled = false
+                AuthenticationEnabled = false,
+                MvccVacuumFrequency = 20000,
+                MvccVacuumThreadCount = 8,
+                SqlQueryHistorySize = 99,
+                SqlSchemas = new List<string> { "SCHEMA_3", "schema_4" },
+                ExecutorConfiguration = new[]
+                {
+                    new ExecutorConfiguration
+                    {
+                        Name = "ex-1",
+                        Size = 11
+                    }
+                }
             };
         }
 

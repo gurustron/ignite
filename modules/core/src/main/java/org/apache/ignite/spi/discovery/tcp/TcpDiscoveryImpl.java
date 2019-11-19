@@ -29,7 +29,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.spi.IgniteSpiContext;
@@ -54,6 +56,9 @@ abstract class TcpDiscoveryImpl {
     /** Response WAIT. */
     protected static final int RES_WAIT = 200;
 
+    /** Response join impossible. */
+    protected static final int RES_JOIN_IMPOSSIBLE = 255;
+
     /** */
     protected final TcpDiscoverySpi spi;
 
@@ -61,7 +66,7 @@ abstract class TcpDiscoveryImpl {
     protected final IgniteLogger log;
 
     /** */
-    protected TcpDiscoveryNode locNode;
+    protected volatile TcpDiscoveryNode locNode;
 
     /** Debug mode. */
     protected boolean debugMode;
@@ -70,7 +75,6 @@ abstract class TcpDiscoveryImpl {
     private int debugMsgHist = 512;
 
     /** Received messages. */
-    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     protected ConcurrentLinkedDeque<String> debugLogQ;
 
     /** */
@@ -98,6 +102,18 @@ abstract class TcpDiscoveryImpl {
             log.trace(msg);
         }
     };
+
+    /**
+     * Upcasts collection type.
+     *
+     * @param c Initial collection.
+     * @return Resulting collection.
+     */
+    protected static <T extends R, R> Collection<R> upcast(Collection<T> c) {
+        A.notNull(c, "c");
+
+        return (Collection<R>)c;
+    }
 
     /**
      * @param spi Adapter.
@@ -201,6 +217,12 @@ abstract class TcpDiscoveryImpl {
     public abstract Collection<ClusterNode> getRemoteNodes();
 
     /**
+     * @param feature Feature to check.
+     * @return {@code true} if all nodes support the given feature, {@code false} otherwise.
+     */
+    public abstract boolean allNodesSupport(IgniteFeatures feature);
+
+    /**
      * @param nodeId Node id.
      * @return Node with given ID or {@code null} if node is not found.
      */
@@ -232,6 +254,20 @@ abstract class TcpDiscoveryImpl {
     public abstract void failNode(UUID nodeId, @Nullable String warning);
 
     /**
+     * Dumps ring structure to logger.
+     *
+     * @param log Logger.
+     */
+    public abstract void dumpRingStructure(IgniteLogger log);
+
+    /**
+     * Get current topology version.
+     *
+     * @return Current topology version.
+     */
+    public abstract long getCurrentTopologyVersion();
+
+    /**
      * @param igniteInstanceName Ignite instance name.
      * @throws IgniteSpiException If failed.
      */
@@ -244,6 +280,13 @@ abstract class TcpDiscoveryImpl {
      * @throws IgniteSpiException If failed.
      */
     public int boundPort() throws IgniteSpiException {
+        return 0;
+    }
+
+    /**
+     * @return connection check interval.
+     */
+    public long connectionCheckInterval() {
         return 0;
     }
 
@@ -306,11 +349,12 @@ abstract class TcpDiscoveryImpl {
     /**
      * @throws IgniteSpiException If failed.
      */
-    @SuppressWarnings("BusyWait")
     protected final void registerLocalNodeAddress() throws IgniteSpiException {
+        long spiJoinTimeout = spi.getJoinTimeout();
+
         // Make sure address registration succeeded.
         // ... but limit it if join timeout is configured.
-        long start = spi.getJoinTimeout() > 0 ? U.currentTimeMillis() : 0;
+        long startNanos = spiJoinTimeout > 0 ? System.nanoTime() : 0;
 
         while (true) {
             try {
@@ -330,12 +374,12 @@ abstract class TcpDiscoveryImpl {
                     "change 'reconnectDelay' to configure the frequency of retries).");
             };
 
-            if (start > 0 && (U.currentTimeMillis() - start) > spi.getJoinTimeout())
+            if (spiJoinTimeout > 0 && U.millisSinceNanos(startNanos) > spiJoinTimeout)
                 throw new IgniteSpiException(
                     "Failed to register local addresses with IP finder within join timeout " +
                         "(make sure IP finder configuration is correct, and operating system firewalls are disabled " +
                         "on all host machines, or consider increasing 'joinTimeout' configuration property) " +
-                        "[joinTimeout=" + spi.getJoinTimeout() + ']');
+                        "[joinTimeout=" + spiJoinTimeout + ']');
 
             try {
                 U.sleep(spi.getReconnectDelay());

@@ -25,6 +25,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.junit.Test;
 
 /**
  *
@@ -52,6 +53,7 @@ public class JettyRestProcessorSignedSelfTest extends JettyRestProcessorAbstract
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUnauthorized() throws Exception {
         String addr = "http://" + LOC_HOST + ":" + restPort() + "/ignite?cacheName=default&cmd=top";
 
@@ -82,10 +84,10 @@ public class JettyRestProcessorSignedSelfTest extends JettyRestProcessorAbstract
     @Override protected String signature() throws Exception {
         long ts = U.currentTimeMillis();
 
-        String s = ts + ":" + REST_SECRET_KEY;
-
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-1");
+
+            String s = ts + ":" + REST_SECRET_KEY;
 
             md.update(s.getBytes());
 

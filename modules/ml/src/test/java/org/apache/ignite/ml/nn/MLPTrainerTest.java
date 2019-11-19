@@ -18,12 +18,16 @@
 package org.apache.ignite.ml.nn;
 
 import org.apache.ignite.ml.TestUtils;
-import org.apache.ignite.ml.math.Matrix;
-import org.apache.ignite.ml.math.impls.matrix.DenseLocalOnHeapMatrix;
-import org.apache.ignite.ml.math.impls.vector.DenseLocalOnHeapVector;
+import org.apache.ignite.ml.dataset.feature.extractor.impl.LabeledDummyVectorizer;
+import org.apache.ignite.ml.math.primitives.matrix.Matrix;
+import org.apache.ignite.ml.math.primitives.matrix.impl.DenseMatrix;
+import org.apache.ignite.ml.math.primitives.vector.VectorUtils;
+import org.apache.ignite.ml.math.primitives.vector.impl.DenseVector;
 import org.apache.ignite.ml.nn.architecture.MLPArchitecture;
 import org.apache.ignite.ml.optimization.LossFunctions;
+import org.apache.ignite.ml.optimization.SmoothParametrized;
 import org.apache.ignite.ml.optimization.updatecalculators.*;
+import org.apache.ignite.ml.structures.LabeledVector;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
@@ -78,8 +82,8 @@ public class MLPTrainerTest {
         public void testXORSimpleGD() {
             xorTest(new UpdatesStrategy<>(
                 new SimpleGDUpdateCalculator(0.2),
-                SimpleGDParameterUpdate::sumLocal,
-                SimpleGDParameterUpdate::avg
+                SimpleGDParameterUpdate.SUM_LOCAL,
+                SimpleGDParameterUpdate.AVG
             ));
         }
 
@@ -90,8 +94,8 @@ public class MLPTrainerTest {
         public void testXORRProp() {
             xorTest(new UpdatesStrategy<>(
                 new RPropUpdateCalculator(),
-                RPropParameterUpdate::sumLocal,
-                RPropParameterUpdate::avg
+                RPropParameterUpdate.SUM_LOCAL,
+                RPropParameterUpdate.AVG
             ));
         }
 
@@ -113,11 +117,11 @@ public class MLPTrainerTest {
          * @param <P> Updater parameters type.
          */
         private <P extends Serializable> void xorTest(UpdatesStrategy<? super MultilayerPerceptron, P> updatesStgy) {
-            Map<Integer, double[][]> xorData = new HashMap<>();
-            xorData.put(0, new double[][]{{0.0, 0.0}, {0.0}});
-            xorData.put(1, new double[][]{{0.0, 1.0}, {1.0}});
-            xorData.put(2, new double[][]{{1.0, 0.0}, {1.0}});
-            xorData.put(3, new double[][]{{1.0, 1.0}, {0.0}});
+            Map<Integer, LabeledVector<double[]>> xorData = new HashMap<>();
+            xorData.put(0, VectorUtils.of(0.0, 0.0).labeled(new double[]{0.0}));
+            xorData.put(1, VectorUtils.of(0.0, 1.0).labeled(new double[]{1.0}));
+            xorData.put(2, VectorUtils.of(1.0, 0.0).labeled(new double[]{1.0}));
+            xorData.put(3, VectorUtils.of(1.0, 1.0).labeled(new double[]{0.0}));
 
             MLPArchitecture arch = new MLPArchitecture(2).
                 withAddedLayer(10, true, Activators.RELU).
@@ -133,21 +137,72 @@ public class MLPTrainerTest {
                 123L
             );
 
-            MultilayerPerceptron mlp = trainer.fit(
-                xorData,
-                parts,
-                (k, v) -> v[0],
-                (k, v) -> v[1]
-            );
+            MultilayerPerceptron mlp = trainer.fit(xorData, parts, new LabeledDummyVectorizer<>());
 
-            Matrix predict = mlp.apply(new DenseLocalOnHeapMatrix(new double[][]{
+            Matrix predict = mlp.predict(new DenseMatrix(new double[][]{
                 {0.0, 0.0},
                 {0.0, 1.0},
                 {1.0, 0.0},
                 {1.0, 1.0}
             }));
 
-            TestUtils.checkIsInEpsilonNeighbourhood(new DenseLocalOnHeapVector(new double[]{0.0}), predict.getRow(0), 1E-1);
+            TestUtils.checkIsInEpsilonNeighbourhood(new DenseVector(new double[]{0.0}), predict.getRow(0), 1E-1);
+        }
+
+        /** */
+        @Test
+        public void testUpdate() {
+            UpdatesStrategy<SmoothParametrized, SimpleGDParameterUpdate> updatesStgy = new UpdatesStrategy<>(
+                new SimpleGDUpdateCalculator(0.2),
+                SimpleGDParameterUpdate.SUM_LOCAL,
+                SimpleGDParameterUpdate.AVG
+            );
+
+            Map<Integer, LabeledVector<double[]>> xorData = new HashMap<>();
+            xorData.put(0, VectorUtils.of(0.0, 0.0).labeled(new double[]{0.0}));
+            xorData.put(1, VectorUtils.of(0.0, 1.0).labeled(new double[]{1.0}));
+            xorData.put(2, VectorUtils.of(1.0, 0.0).labeled(new double[]{1.0}));
+            xorData.put(3, VectorUtils.of(1.0, 1.0).labeled(new double[]{0.0}));
+
+            MLPArchitecture arch = new MLPArchitecture(2).
+                withAddedLayer(10, true, Activators.RELU).
+                withAddedLayer(1, false, Activators.SIGMOID);
+
+            MLPTrainer<SimpleGDParameterUpdate> trainer = new MLPTrainer<>(
+                arch,
+                LossFunctions.MSE,
+                updatesStgy,
+                3000,
+                batchSize,
+                50,
+                123L
+            );
+
+            MultilayerPerceptron originalMdl = trainer.fit(xorData, parts, new LabeledDummyVectorizer<>());
+
+            MultilayerPerceptron updatedOnSameDS = trainer.update(
+                originalMdl,
+                xorData,
+                parts,
+                new LabeledDummyVectorizer<>()
+            );
+
+            MultilayerPerceptron updatedOnEmptyDS = trainer.update(
+                originalMdl,
+                new HashMap<Integer, LabeledVector<double[]>>(),
+                parts,
+                new LabeledDummyVectorizer<>()
+            );
+
+            DenseMatrix matrix = new DenseMatrix(new double[][] {
+                {0.0, 0.0},
+                {0.0, 1.0},
+                {1.0, 0.0},
+                {1.0, 1.0}
+            });
+
+            TestUtils.checkIsInEpsilonNeighbourhood(originalMdl.predict(matrix).getRow(0), updatedOnSameDS.predict(matrix).getRow(0), 1E-1);
+            TestUtils.checkIsInEpsilonNeighbourhood(originalMdl.predict(matrix).getRow(0), updatedOnEmptyDS.predict(matrix).getRow(0), 1E-1);
         }
     }
 

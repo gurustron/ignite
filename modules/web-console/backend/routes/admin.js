@@ -23,20 +23,19 @@ const express = require('express');
 
 module.exports = {
     implements: 'routes/admin',
-    inject: ['settings', 'mongo', 'services/spaces', 'services/mails', 'services/sessions', 'services/users', 'services/notifications']
+    inject: ['settings', 'mongo', 'services/spaces', 'services/sessions', 'services/users', 'services/notifications']
 };
 
 /**
  * @param settings
  * @param mongo
  * @param spacesService
- * @param {MailsService} mailsService
  * @param {SessionsService} sessionsService
  * @param {UsersService} usersService
  * @param {NotificationsService} notificationsService
  * @returns {Promise}
  */
-module.exports.factory = function(settings, mongo, spacesService, mailsService, sessionsService, usersService, notificationsService) {
+module.exports.factory = function(settings, mongo, spacesService, sessionsService, usersService, notificationsService) {
     return new Promise((factoryResolve) => {
         const router = new express.Router();
 
@@ -79,10 +78,10 @@ module.exports.factory = function(settings, mongo, spacesService, mailsService, 
                 .catch(res.api.error);
         });
 
-        // Revert to your identity.
+        // Update notifications.
         router.put('/notifications', (req, res) => {
             notificationsService.merge(req.user._id, req.body.message, req.body.isShown)
-                .then(res.api.ok)
+                .then(res.api.done)
                 .catch(res.api.error);
         });
 

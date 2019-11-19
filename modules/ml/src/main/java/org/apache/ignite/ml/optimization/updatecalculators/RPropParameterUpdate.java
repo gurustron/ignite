@@ -17,13 +17,15 @@
 
 package org.apache.ignite.ml.optimization.updatecalculators;
 
+import org.apache.ignite.ml.math.functions.IgniteFunction;
+import org.apache.ignite.ml.math.primitives.vector.Vector;
+import org.apache.ignite.ml.math.primitives.vector.VectorUtils;
+import org.apache.ignite.ml.math.primitives.vector.impl.DenseVector;
+
 import java.io.Serializable;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
-import org.apache.ignite.ml.math.Vector;
-import org.apache.ignite.ml.math.VectorUtils;
-import org.apache.ignite.ml.math.impls.vector.DenseLocalOnHeapVector;
 
 /**
  * Data needed for RProp updater.
@@ -31,6 +33,15 @@ import org.apache.ignite.ml.math.impls.vector.DenseLocalOnHeapVector;
  * See <a href="https://paginas.fe.up.pt/~ee02162/dissertacao/RPROP%20paper.pdf">RProp</a>.</p>
  */
 public class RPropParameterUpdate implements Serializable {
+    /** Sums updates returned by different trainings. */
+    public static final IgniteFunction<List<RPropParameterUpdate>, RPropParameterUpdate> SUM = RPropParameterUpdate::sum;
+
+    /** Averages updates returned by different trainings. */
+    public static final IgniteFunction<List<RPropParameterUpdate>, RPropParameterUpdate> AVG = RPropParameterUpdate::avg;
+
+    /** Sums updates during one training. */
+    public static final IgniteFunction<List<RPropParameterUpdate>, RPropParameterUpdate> SUM_LOCAL = RPropParameterUpdate::sumLocal;
+
     /** */
     private static final long serialVersionUID = -165584242642323332L;
 
@@ -43,6 +54,7 @@ public class RPropParameterUpdate implements Serializable {
      * Previous iteration model partial derivatives by parameters.
      */
     protected Vector prevIterationGradient;
+
     /**
      * Previous iteration parameters deltas. In original paper they are labeled with "delta".
      */
@@ -60,10 +72,10 @@ public class RPropParameterUpdate implements Serializable {
      * @param initUpdate Initial updateCache (in original work labeled as "delta_0").
      */
     RPropParameterUpdate(int paramsCnt, double initUpdate) {
-        prevIterationUpdates = new DenseLocalOnHeapVector(paramsCnt);
-        prevIterationGradient = new DenseLocalOnHeapVector(paramsCnt);
-        deltas = new DenseLocalOnHeapVector(paramsCnt).assign(initUpdate);
-        updatesMask = new DenseLocalOnHeapVector(paramsCnt);
+        prevIterationUpdates = new DenseVector(paramsCnt);
+        prevIterationGradient = new DenseVector(paramsCnt);
+        deltas = new DenseVector(paramsCnt).assign(initUpdate);
+        updatesMask = new DenseVector(paramsCnt);
     }
 
     /**
@@ -170,7 +182,7 @@ public class RPropParameterUpdate implements Serializable {
      * @param updates Updates.
      * @return Sum of updates during one training.
      */
-    public static RPropParameterUpdate sumLocal(List<RPropParameterUpdate> updates) {
+    private static RPropParameterUpdate sumLocal(List<RPropParameterUpdate> updates) {
         List<RPropParameterUpdate> nonNullUpdates = updates.stream().filter(Objects::nonNull)
             .collect(Collectors.toList());
 
@@ -183,7 +195,7 @@ public class RPropParameterUpdate implements Serializable {
             pu.prevIterationUpdates())).reduce(Vector::plus).orElse(null);
 
         return new RPropParameterUpdate(totalUpdate, newGradient, newDeltas,
-            new DenseLocalOnHeapVector(newDeltas.size()).assign(1.0));
+            new DenseVector(newDeltas.size()).assign(1.0));
     }
 
     /**
@@ -192,7 +204,7 @@ public class RPropParameterUpdate implements Serializable {
      * @param updates Updates.
      * @return Sum of updates during returned by different trainings.
      */
-    public static RPropParameterUpdate sum(List<RPropParameterUpdate> updates) {
+    private static RPropParameterUpdate sum(List<RPropParameterUpdate> updates) {
         Vector totalUpdate = updates.stream().filter(Objects::nonNull)
             .map(pu -> VectorUtils.elementWiseTimes(pu.updatesMask().copy(), pu.prevIterationUpdates()))
             .reduce(Vector::plus).orElse(null);
@@ -203,7 +215,7 @@ public class RPropParameterUpdate implements Serializable {
 
         if (totalUpdate != null)
             return new RPropParameterUpdate(totalUpdate, totalGradient, totalDelta,
-                new DenseLocalOnHeapVector(Objects.requireNonNull(totalDelta).size()).assign(1.0));
+                new DenseVector(Objects.requireNonNull(totalDelta).size()).assign(1.0));
 
         return null;
     }
@@ -214,7 +226,7 @@ public class RPropParameterUpdate implements Serializable {
      * @param updates Updates.
      * @return Averages of updates during returned by different trainings.
      */
-    public static RPropParameterUpdate avg(List<RPropParameterUpdate> updates) {
+    private static RPropParameterUpdate avg(List<RPropParameterUpdate> updates) {
         List<RPropParameterUpdate> nonNullUpdates = updates.stream()
             .filter(Objects::nonNull).collect(Collectors.toList());
         int size = nonNullUpdates.size();

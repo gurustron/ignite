@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-set -o nounset
-set -o errexit
-set -o pipefail
-set -o errtrace
-set -o functrace
+if [ ! -z "${IGNITE_SCRIPT_STRICT_MODE:-}" ]
+then
+    set -o nounset
+    set -o errexit
+    set -o pipefail
+    set -o errtrace
+    set -o functrace
+fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")"    # Run from the script's root
 
@@ -37,7 +40,7 @@ usage () {
 #######################################################################
 
 Prerequisites:
-     - RPM: binary archive with name 'apache-ignite-fabric-<version>-bin.zip'
+     - RPM: binary archive with name 'apache-ignite-<version>-bin.zip'
      - DEB: previously built corresponding RPM package
 
 Usage: ./$(basename ${BASH_SOURCE[0]}) --rpm,--deb [--batch]
@@ -95,7 +98,7 @@ prepEnv () {
 getBin () {
     set -x
     IGNITE_VERSION=$(cat rpm/apache-ignite.spec | grep Version: | head -1 | sed -r 's|.*:\s+(.*)|\1|')
-    BIN_NAME="apache-ignite-fabric-${IGNITE_VERSION}-bin.zip"
+    BIN_NAME="apache-ignite-${IGNITE_VERSION}-bin.zip"
     binPreparedFlag=false
 
     # Search binary in packaging root directory 
@@ -169,7 +172,7 @@ buildDEB () {
 
     # Assemble DEB packages
     cd ${DEB_WORK_DIR}/apache-ignite-${buildDirVersion}
-    debian/rules binary
+    fakeroot debian/rules binary
 
     # Gather DEBs
     find ${DEB_WORK_DIR} -name "*.deb" -exec mv -fv {} ${PACKAGING_DIR} \;
@@ -196,13 +199,6 @@ processTrap () {
 ###########
 START_TIME=$(date +%s)
 clear
-
-
-# Check for sudo
-if [ $EUID -ne 0 ]; then
-    echo "[ERROR] Packages building requires root | sudo privileges"
-    exit 1
-fi
 
 
 # Parse input options

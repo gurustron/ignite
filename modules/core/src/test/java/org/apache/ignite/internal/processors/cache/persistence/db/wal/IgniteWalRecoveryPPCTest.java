@@ -30,8 +30,8 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  *
@@ -85,16 +85,16 @@ public class IgniteWalRecoveryPPCTest extends GridCommonAbstractTest {
         dbCfg.setPageSize(4 * 1024);
 
         DataRegionConfiguration memPlcCfg = new DataRegionConfiguration();
-        memPlcCfg.setInitialSize(1024 * 1024 * 1024);
-        memPlcCfg.setMaxSize(1024 * 1024 * 1024);
+        memPlcCfg.setInitialSize(1024L * 1024 * 1024);
+        memPlcCfg.setMaxSize(1024L * 1024 * 1024);
         memPlcCfg.setPersistenceEnabled(true);
 
         dbCfg.setDefaultDataRegionConfiguration(memPlcCfg);
 
         DataRegionConfiguration memPlcCfg2 = new DataRegionConfiguration();
         memPlcCfg2.setName(MEM_PLC_NO_PDS);
-        memPlcCfg2.setInitialSize(1024 * 1024 * 1024);
-        memPlcCfg2.setMaxSize(1024 * 1024 * 1024);
+        memPlcCfg2.setInitialSize(1024L * 1024 * 1024);
+        memPlcCfg2.setMaxSize(1024L * 1024 * 1024);
         memPlcCfg2.setPersistenceEnabled(false);
 
         dbCfg.setDataRegionConfigurations(memPlcCfg2);
@@ -138,6 +138,7 @@ public class IgniteWalRecoveryPPCTest extends GridCommonAbstractTest {
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testWalSimple() throws Exception {
         try {
             IgniteEx ignite = startGrid(1);
@@ -234,6 +235,7 @@ public class IgniteWalRecoveryPPCTest extends GridCommonAbstractTest {
     /**
      *
      */
+    @Test
     public void testDynamicallyStartedNonPersistentCache() throws Exception {
         try {
             IgniteEx ignite = startGrid(1);

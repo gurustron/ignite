@@ -26,6 +26,7 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
@@ -74,16 +75,10 @@ public class TxMultiCacheAsyncOpsTest extends GridCommonAbstractTest {
         startGridsMultiThreaded(GRID_COUNT);
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
-        stopAllGrids();
-    }
-
     /**
      *
      */
+    @Test
     public void testCommitAfterAsyncPut() {
         CacheConfiguration[] caches = cacheConfigurations();
 
@@ -113,6 +108,7 @@ public class TxMultiCacheAsyncOpsTest extends GridCommonAbstractTest {
     /**
      *
      */
+    @Test
     public void testCommitAfterAsyncGet() {
         CacheConfiguration[] caches = cacheConfigurations();
 

@@ -1,8 +1,6 @@
-*.idea
-*.log
 *.log.*
 .npmrc
-build/*
-node_modules
 public/stylesheets/*.css
-
+build/
+node_modules/
+!package-lock.json

@@ -20,7 +20,6 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.processors.cache.distributed.near.IgniteCacheQueryNodeRestartSelfTest;
-import org.apache.ignite.testframework.GridTestUtils;
 
 /**
  *
@@ -34,7 +33,7 @@ public class IgniteStableBaselineCacheQueryNodeRestartsSelfTest extends IgniteCa
             new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(
                     new DataRegionConfiguration()
-                        .setMaxSize(200 * 1024 * 1024)
+                        .setMaxSize(200L * 1024 * 1024)
                         .setPersistenceEnabled(true)
                 )
         );
@@ -50,7 +49,7 @@ public class IgniteStableBaselineCacheQueryNodeRestartsSelfTest extends IgniteCa
 
         initStoreStrategy();
 
-        grid(0).active(true);
+        grid(0).cluster().active(true);
 
         stopGrid(gridCount());
 

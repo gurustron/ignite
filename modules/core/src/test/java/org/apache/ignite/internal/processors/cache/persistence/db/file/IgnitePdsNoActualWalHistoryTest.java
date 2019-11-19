@@ -36,6 +36,7 @@ import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabase
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  *
@@ -67,7 +68,7 @@ public class IgnitePdsNoActualWalHistoryTest extends GridCommonAbstractTest {
             .setWalSegments(10)
             .setWalMode(WALMode.LOG_ONLY)
             .setDefaultDataRegionConfiguration(new DataRegionConfiguration()
-                .setMaxSize(100 * 1024 * 1024)
+                .setMaxSize(100L * 1024 * 1024)
                 .setPersistenceEnabled(true));
 
         cfg.setMarshaller(null);
@@ -98,6 +99,7 @@ public class IgnitePdsNoActualWalHistoryTest extends GridCommonAbstractTest {
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testWalBig() throws Exception {
         try {
             IgniteEx ignite = startGrid(1);

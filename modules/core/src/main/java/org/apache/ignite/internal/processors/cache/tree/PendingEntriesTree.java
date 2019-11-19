@@ -23,6 +23,7 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.persistence.tree.BPlusTree;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
+import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageLockListener;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
 /**
@@ -30,7 +31,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
  */
 public class PendingEntriesTree extends BPlusTree<PendingRow, PendingRow> {
     /** */
-    public final static Object WITHOUT_KEY = new Object();
+    public static final Object WITHOUT_KEY = new Object();
 
     /** */
     private final CacheGroupContext grp;
@@ -50,17 +51,23 @@ public class PendingEntriesTree extends BPlusTree<PendingRow, PendingRow> {
         PageMemory pageMem,
         long metaPageId,
         ReuseList reuseList,
-        boolean initNew)
-        throws IgniteCheckedException {
-        super(name,
+        boolean initNew,
+        PageLockListener lockLsnr
+    ) throws IgniteCheckedException {
+        super(
+            name,
             grp.groupId(),
+            grp.name(),
             pageMem,
             grp.dataRegion().config().isPersistenceEnabled() ? grp.shared().wal() : null,
             grp.offheap().globalRemoveId(),
             metaPageId,
             reuseList,
             grp.sharedGroup() ? CacheIdAwarePendingEntryInnerIO.VERSIONS : PendingEntryInnerIO.VERSIONS,
-            grp.sharedGroup() ? CacheIdAwarePendingEntryLeafIO.VERSIONS : PendingEntryLeafIO.VERSIONS);
+            grp.sharedGroup() ? CacheIdAwarePendingEntryLeafIO.VERSIONS : PendingEntryLeafIO.VERSIONS,
+            grp.shared().kernalContext().failure(),
+            lockLsnr
+        );
 
         this.grp = grp;
 
@@ -70,8 +77,7 @@ public class PendingEntriesTree extends BPlusTree<PendingRow, PendingRow> {
     }
 
     /** {@inheritDoc} */
-    @Override protected int compare(BPlusIO<PendingRow> iox, long pageAddr, int idx, PendingRow row)
-        throws IgniteCheckedException {
+    @Override protected int compare(BPlusIO<PendingRow> iox, long pageAddr, int idx, PendingRow row) {
         PendingRowIO io = (PendingRowIO)iox;
 
         int cmp;
@@ -111,7 +117,7 @@ public class PendingEntriesTree extends BPlusTree<PendingRow, PendingRow> {
     }
 
     /** {@inheritDoc} */
-    @Override protected PendingRow getRow(BPlusIO<PendingRow> io, long pageAddr, int idx, Object flag)
+    @Override public PendingRow getRow(BPlusIO<PendingRow> io, long pageAddr, int idx, Object flag)
         throws IgniteCheckedException {
         PendingRow row = io.getLookupRow(this, pageAddr, idx);
 

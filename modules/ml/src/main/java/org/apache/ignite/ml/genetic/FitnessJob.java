@@ -19,17 +19,15 @@ package org.apache.ignite.ml.genetic;
 
 import java.util.ArrayList;
 import java.util.List;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.compute.ComputeJobAdapter;
+import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.resources.LoggerResource;
 import org.apache.ignite.transactions.Transaction;
-
-import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 
 /**
  * Responsible for performing fitness evaluation on an individual chromosome
@@ -42,14 +40,14 @@ public class FitnessJob extends ComputeJobAdapter {
 
     /** Ignite instance */
     @IgniteInstanceResource
-    private Ignite ignite = null;
+    private Ignite ignite;
 
     /** Ignite logger */
     @LoggerResource
-    private IgniteLogger log = null;
+    private IgniteLogger log;
 
     /** IFitnessFunction */
-    private IFitnessFunction fitnessFuncton = null;
+    private IFitnessFunction fitnessFuncton;
 
     /**
      * @param key Chromosome primary Key
@@ -60,14 +58,8 @@ public class FitnessJob extends ComputeJobAdapter {
         this.fitnessFuncton = fitnessFunction;
     }
 
-    /**
-     * Perform fitness operation utilizing IFitnessFunction
-     *
-     * Update chromosome's fitness value
-     *
-     * @return Fitness score
-     */
-    public Double execute() throws IgniteException {
+    /** {@inheritDoc} */
+    @Override public Double execute() throws IgniteException {
 
         IgniteCache<Long, Chromosome> populationCache = ignite.cache(GAGridConstants.POPULATION_CACHE);
 
@@ -85,9 +77,9 @@ public class FitnessJob extends ComputeJobAdapter {
             genes.add(aGene);
         }
 
-        Double value = fitnessFuncton.evaluate(genes);
+        Double val = fitnessFuncton.evaluate(genes);
 
-        chromosome.setFitnessScore(value);
+        chromosome.setFitnessScore(val);
 
         Transaction tx = ignite.transactions().txStart();
 
@@ -95,7 +87,7 @@ public class FitnessJob extends ComputeJobAdapter {
 
         tx.commit();
 
-        return value;
+        return val;
     }
 
 }

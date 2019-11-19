@@ -21,9 +21,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Collection;
 import java.util.HashSet;
-import org.apache.ignite.IgniteInterruptedException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.pagemem.FullPageId;
+import org.apache.ignite.internal.processors.cache.persistence.PageStoreWriter;
 
 /**
  * Delayed page writes tracker. Provides delayed write implementations and allows to check if page is actually being
@@ -34,7 +36,7 @@ public class DelayedPageReplacementTracker {
     private final int pageSize;
 
     /** Flush dirty page real implementation. */
-    private final ReplacedPageWriter flushDirtyPage;
+    private final PageStoreWriter flushDirtyPage;
 
     /** Logger. */
     private final IgniteLogger log;
@@ -48,23 +50,18 @@ public class DelayedPageReplacementTracker {
         @Override protected ByteBuffer initialValue() {
             ByteBuffer buf = ByteBuffer.allocateDirect(pageSize);
 
-            buf.order(ByteOrder.LITTLE_ENDIAN);
+            buf.order(ByteOrder.nativeOrder());
 
             return buf;
         }
     };
 
     /**
-     * Dirty page write for replacement operations thread local. Because page write {@link DelayedDirtyPageWrite} is
-     * stateful and not thread safe, this thread local protects from GC pressure on pages replacement.
+     * Dirty page write for replacement operations thread local. Because page write {@link DelayedDirtyPageStoreWrite} is
+     * stateful and not thread safe, this thread local protects from GC pressure on pages replacement. <br> Map is used
+     * instead of build-in thread local to allow GC to remove delayed writers for alive threads after node stop.
      */
-    private final ThreadLocal<DelayedDirtyPageWrite> delayedPageWriteThreadLoc
-        = new ThreadLocal<DelayedDirtyPageWrite>() {
-        @Override protected DelayedDirtyPageWrite initialValue() {
-            return new DelayedDirtyPageWrite(flushDirtyPage, byteBufThreadLoc, pageSize,
-                DelayedPageReplacementTracker.this);
-        }
-    };
+    private final Map<Long, DelayedDirtyPageStoreWrite> delayedPageWriteThreadLocMap = new ConcurrentHashMap<>();
 
     /**
      * @param pageSize Page size.
@@ -72,8 +69,12 @@ public class DelayedPageReplacementTracker {
      * @param log Logger.
      * @param segmentCnt Segments count.
      */
-    public DelayedPageReplacementTracker(int pageSize, ReplacedPageWriter flushDirtyPage,
-        IgniteLogger log, int segmentCnt) {
+    public DelayedPageReplacementTracker(
+        int pageSize,
+        PageStoreWriter flushDirtyPage,
+        IgniteLogger log,
+        int segmentCnt
+    ) {
         this.pageSize = pageSize;
         this.flushDirtyPage = flushDirtyPage;
         this.log = log;
@@ -86,8 +87,9 @@ public class DelayedPageReplacementTracker {
     /**
      * @return delayed page write implementation, finish method to be called to actually write page.
      */
-    public DelayedDirtyPageWrite delayedPageWrite() {
-        return delayedPageWriteThreadLoc.get();
+    public DelayedDirtyPageStoreWrite delayedPageWrite() {
+        return delayedPageWriteThreadLocMap.computeIfAbsent(Thread.currentThread().getId(),
+            id -> new DelayedDirtyPageStoreWrite(flushDirtyPage, byteBufThreadLoc, pageSize, this));
     }
 
     /**
@@ -165,17 +167,23 @@ public class DelayedPageReplacementTracker {
                 if (!hasLockedPages)
                     return;
 
+                boolean interrupted = false;
+
                 while (locked.contains(id)) {
                     if (log.isDebugEnabled())
                         log.debug("Found replaced page [" + id + "] which is being written to page store, wait for finish replacement");
 
                     try {
+                        // Uninterruptable wait.
                         locked.wait();
                     }
                     catch (InterruptedException e) {
-                        throw new IgniteInterruptedException(e);
+                        interrupted = true;
                     }
                 }
+
+                if (interrupted)
+                    Thread.currentThread().interrupt();
             }
         }
 

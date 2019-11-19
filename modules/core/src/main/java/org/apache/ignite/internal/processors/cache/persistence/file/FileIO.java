@@ -20,6 +20,8 @@ package org.apache.ignite.internal.processors.cache.persistence.file;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.WritableByteChannel;
 
 /**
  * Interface to perform file I/O operations.
@@ -60,6 +62,17 @@ public interface FileIO extends AutoCloseable {
     public int read(ByteBuffer destBuf) throws IOException;
 
     /**
+     * Reads a sequence of bytes from this file into the {@code destinationBuffer}.
+     *
+     * @param destBuf Destination byte buffer.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int readFully(ByteBuffer destBuf) throws IOException;
+
+    /**
      * Reads a sequence of bytes from this file into the {@code destinationBuffer}
      * starting from specified file {@code position}.
      *
@@ -73,6 +86,19 @@ public interface FileIO extends AutoCloseable {
      * @throws IOException If some I/O error occurs.
      */
     public int read(ByteBuffer destBuf, long position) throws IOException;
+
+    /**
+     * Reads a sequence of bytes from this file into the {@code destinationBuffer}
+     * starting from specified file {@code position}.
+     *
+     * @param destBuf Destination byte buffer.
+     * @param position Starting position of file.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int readFully(ByteBuffer destBuf, long position) throws IOException;
 
     /**
      * Reads a up to {@code length} bytes from this file into the {@code buffer}.
@@ -89,6 +115,20 @@ public interface FileIO extends AutoCloseable {
     public int read(byte[] buf, int off, int len) throws IOException;
 
     /**
+     * Reads a up to {@code length} bytes from this file into the {@code buffer}.
+     *
+     * @param buf Destination byte array.
+     * @param off The start offset in array {@code b}
+     *               at which the data is written.
+     * @param len Number of bytes read.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int readFully(byte[] buf, int off, int len) throws IOException;
+
+    /**
      * Writes a sequence of bytes to this file from the {@code sourceBuffer}.
      *
      * @param srcBuf Source buffer.
@@ -98,6 +138,17 @@ public interface FileIO extends AutoCloseable {
      * @throws IOException If some I/O error occurs.
      */
     public int write(ByteBuffer srcBuf) throws IOException;
+
+    /**
+     * Writes a sequence of bytes to this file from the {@code sourceBuffer}.
+     *
+     * @param srcBuf Source buffer.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int writeFully(ByteBuffer srcBuf) throws IOException;
 
     /**
      * Writes a sequence of bytes to this file from the {@code sourceBuffer}
@@ -113,6 +164,19 @@ public interface FileIO extends AutoCloseable {
     public int write(ByteBuffer srcBuf, long position) throws IOException;
 
     /**
+     * Writes a sequence of bytes to this file from the {@code sourceBuffer}
+     * starting from specified file {@code position}
+     *
+     * @param srcBuf Source buffer.
+     * @param position Starting file position.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int writeFully(ByteBuffer srcBuf, long position) throws IOException;
+
+    /**
      * Writes {@code length} bytes from the {@code buffer}
      * starting at offset {@code off} to this file.
      *
@@ -120,9 +184,25 @@ public interface FileIO extends AutoCloseable {
      * @param off Start offset in the {@code buffer}.
      * @param len Number of bytes to write.
      *
+     * @return Number of written bytes.
+     * 
      * @throws IOException If some I/O error occurs.
      */
-    public void write(byte[] buf, int off, int len) throws IOException;
+    public int write(byte[] buf, int off, int len) throws IOException;
+
+    /**
+     * Writes {@code length} bytes from the {@code buffer}
+     * starting at offset {@code off} to this file.
+     *
+     * @param buf Source byte array.
+     * @param off Start offset in the {@code buffer}.
+     * @param len Number of bytes to write.
+     *
+     * @return Number of written bytes.
+     *
+     * @throws IOException If some I/O error occurs.
+     */
+    public int writeFully(byte[] buf, int off, int len) throws IOException;
 
     /**
      * Allocates memory mapped buffer for this file with given size.
@@ -175,4 +255,48 @@ public interface FileIO extends AutoCloseable {
      * @throws IOException If some I/O error occurs.
      */
     @Override public void close() throws IOException;
+
+    /**
+     * @return File system block size or negative value if unknown.
+     */
+    public int getFileSystemBlockSize();
+
+    /**
+     * @param position Starting file position.
+     * @param len Number of bytes to free.
+     * @return The actual freed size or negative value if not supported.
+     */
+    int punchHole(long position, int len);
+
+    /**
+     * @return Approximate system dependent size of the storage or negative
+     *          value if not supported.
+     * @see #punchHole
+     */
+    long getSparseSize();
+
+    /**
+     * This method will transfers the content of file to the specified channel. This is a synchronous
+     * operation, so performing it on asynchronous channels makes no sense and not provied.
+     *
+     * @param position The relative offset of the file where the transfer begins from.
+     * @param count The number of bytes to be transferred.
+     * @param target Destination channel of the transfer.
+     * @return Count of bytes which was successfully transferred.
+     * @throws IOException If fails.
+     */
+    public default long transferTo(long position, long count, WritableByteChannel target) throws IOException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @param src The source channel.
+     * @param position The position within the file at which the transfer is to begin.
+     * @param count The maximum number of bytes to be transferred.
+     * @return The number of bytes, possibly zero, that were actually transferred.
+     * @throws IOException If fails.
+     */
+    public default long transferFrom(ReadableByteChannel src, long position, long count) throws IOException {
+        throw new UnsupportedOperationException();
+    }
 }

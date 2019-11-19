@@ -37,16 +37,19 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.communication.GridIoManager;
 import org.apache.ignite.internal.managers.deployment.GridDeploymentManager;
-import org.apache.ignite.internal.managers.discovery.DiscoCache;
 import org.apache.ignite.internal.managers.discovery.GridDiscoveryManager;
 import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionTopology;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTopologyFuture;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.PartitionsEvictManager;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxLocal;
 import org.apache.ignite.internal.processors.cache.jta.CacheJtaManagerAdapter;
+import org.apache.ignite.internal.processors.cache.mvcc.DeadlockDetectionManager;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccCachingManager;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccProcessor;
+import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteCacheSnapshotManager;
 import org.apache.ignite.internal.processors.cache.store.CacheStoreManager;
@@ -114,7 +117,7 @@ public class GridCacheSharedContext<K, V> {
     /** Database manager. */
     private IgniteCacheDatabaseSharedManager dbMgr;
 
-    /** Snp manager. */
+    /** Snapshot manager. */
     private IgniteCacheSnapshotManager snpMgr;
 
     /** Page store manager. {@code Null} if persistence is not enabled. */
@@ -126,11 +129,23 @@ public class GridCacheSharedContext<K, V> {
     /** Ttl cleanup manager. */
     private GridCacheSharedTtlCleanupManager ttlMgr;
 
+    /** Partitons evict manager. */
+    private PartitionsEvictManager evictMgr;
+
+    /** Mvcc caching manager. */
+    private MvccCachingManager mvccCachingMgr;
+
+    /** Deadlock detection manager. */
+    private DeadlockDetectionManager deadlockDetectionMgr;
+
     /** Cache contexts map. */
     private ConcurrentHashMap<Integer, GridCacheContext<K, V>> ctxMap;
 
     /** Tx metrics. */
     private final TransactionMetricsAdapter txMetrics;
+
+    /** Cache diagnostic manager. */
+    private CacheDiagnosticManager diagnosticMgr;
 
     /** Store session listeners. */
     private Collection<CacheStoreSessionListener> storeSesLsnrs;
@@ -168,6 +183,9 @@ public class GridCacheSharedContext<K, V> {
     /** */
     private final List<IgniteChangeGlobalStateSupport> stateAwareMgrs;
 
+    /** Cluster is in read-only mode. */
+    private volatile boolean readOnlyMode;
+
     /**
      * @param kernalCtx  Context.
      * @param txMgr Transaction manager.
@@ -177,12 +195,17 @@ public class GridCacheSharedContext<K, V> {
      * @param walMgr WAL manager. {@code Null} if persistence is not enabled.
      * @param walStateMgr WAL state manager.
      * @param depMgr Deployment manager.
+     * @param dbMgr Database manager.
+     * @param snpMgr Snapshot manager.
      * @param exchMgr Exchange manager.
      * @param affMgr Affinity manager.
      * @param ioMgr IO manager.
      * @param ttlMgr Ttl cleanup manager.
+     * @param evictMgr Partitons evict manager.
      * @param jtaMgr JTA manager.
      * @param storeSesLsnrs Store session listeners.
+     * @param mvccCachingMgr Mvcc caching manager.
+     * @param deadlockDetectionMgr Deadlock detection manager.
      */
     public GridCacheSharedContext(
         GridKernalContext kernalCtx,
@@ -199,13 +222,36 @@ public class GridCacheSharedContext<K, V> {
         CacheAffinitySharedManager<K, V> affMgr,
         GridCacheIoManager ioMgr,
         GridCacheSharedTtlCleanupManager ttlMgr,
+        PartitionsEvictManager evictMgr,
         CacheJtaManagerAdapter jtaMgr,
-        Collection<CacheStoreSessionListener> storeSesLsnrs
+        Collection<CacheStoreSessionListener> storeSesLsnrs,
+        MvccCachingManager mvccCachingMgr,
+        DeadlockDetectionManager deadlockDetectionMgr,
+        CacheDiagnosticManager diagnosticMgr
     ) {
         this.kernalCtx = kernalCtx;
 
-        setManagers(mgrs, txMgr, jtaMgr, verMgr, mvccMgr, pageStoreMgr, walMgr, walStateMgr, dbMgr, snpMgr, depMgr,
-            exchMgr, affMgr, ioMgr, ttlMgr);
+        setManagers(
+            mgrs,
+            txMgr,
+            jtaMgr,
+            verMgr,
+            mvccMgr,
+            pageStoreMgr,
+            walMgr,
+            walStateMgr,
+            dbMgr,
+            snpMgr,
+            depMgr,
+            exchMgr,
+            affMgr,
+            ioMgr,
+            ttlMgr,
+            evictMgr,
+            mvccCachingMgr,
+            deadlockDetectionMgr,
+            diagnosticMgr
+        );
 
         this.storeSesLsnrs = storeSesLsnrs;
 
@@ -246,23 +292,13 @@ public class GridCacheSharedContext<K, V> {
      * @throws IgniteCheckedException If failed.
      */
     public void activate() throws IgniteCheckedException {
-        if (!kernalCtx.clientNode())
-            dbMgr.lock();
+        long time = System.currentTimeMillis();
 
-        boolean success = false;
+        for (IgniteChangeGlobalStateSupport mgr : stateAwareMgrs)
+            mgr.onActivate(kernalCtx);
 
-        try {
-            for (IgniteChangeGlobalStateSupport mgr : stateAwareMgrs)
-                mgr.onActivate(kernalCtx);
-
-            success = true;
-        }
-        finally {
-            if (!success) {
-                if (!kernalCtx.clientNode())
-                    dbMgr.unLock();
-            }
-        }
+        if (msgLog.isInfoEnabled())
+            msgLog.info("Components activation performed in " + (System.currentTimeMillis() - time) + " ms.");
     }
 
     /**
@@ -364,7 +400,9 @@ public class GridCacheSharedContext<K, V> {
     void onReconnected(boolean active) throws IgniteCheckedException {
         List<GridCacheSharedManager<K, V>> mgrs = new LinkedList<>();
 
-        setManagers(mgrs, txMgr,
+        setManagers(
+            mgrs,
+            txMgr,
             jtaMgr,
             verMgr,
             mvccMgr,
@@ -377,7 +415,12 @@ public class GridCacheSharedContext<K, V> {
             new GridCachePartitionExchangeManager<K, V>(),
             affMgr,
             ioMgr,
-            ttlMgr);
+            ttlMgr,
+            evictMgr,
+            mvccCachingMgr,
+            deadlockDetectionMgr,
+            diagnosticMgr
+        );
 
         this.mgrs = mgrs;
 
@@ -391,7 +434,7 @@ public class GridCacheSharedContext<K, V> {
         kernalCtx.query().onCacheReconnect();
 
         if (!active)
-            affinity().removeAllCacheInfo();
+            affinity().clearGroupHoldersAndRegistry();
 
         exchMgr.onKernalStart(active, true);
     }
@@ -404,22 +447,10 @@ public class GridCacheSharedContext<K, V> {
         return mgr instanceof GridCacheDeploymentManager || mgr instanceof GridCachePartitionExchangeManager;
     }
 
-    /**
-     * @param mgrs Managers list.
-     * @param txMgr Transaction manager.
-     * @param jtaMgr JTA manager.
-     * @param verMgr Version manager.
-     * @param mvccMgr MVCC manager.
-     * @param pageStoreMgr Page store manager. {@code Null} if persistence is not enabled.
-     * @param walStateMgr WAL state manager.
-     * @param depMgr Deployment manager.
-     * @param exchMgr Exchange manager.
-     * @param affMgr Affinity manager.
-     * @param ioMgr IO manager.
-     * @param ttlMgr Ttl cleanup manager.
-     */
+    /** */
     @SuppressWarnings("unchecked")
-    private void setManagers(List<GridCacheSharedManager<K, V>> mgrs,
+    private void setManagers(
+        List<GridCacheSharedManager<K, V>> mgrs,
         IgniteTxManager txMgr,
         CacheJtaManagerAdapter jtaMgr,
         GridCacheVersionManager verMgr,
@@ -433,7 +464,13 @@ public class GridCacheSharedContext<K, V> {
         GridCachePartitionExchangeManager<K, V> exchMgr,
         CacheAffinitySharedManager affMgr,
         GridCacheIoManager ioMgr,
-        GridCacheSharedTtlCleanupManager ttlMgr) {
+        GridCacheSharedTtlCleanupManager ttlMgr,
+        PartitionsEvictManager evictMgr,
+        MvccCachingManager mvccCachingMgr,
+        DeadlockDetectionManager deadlockDetectionMgr,
+        CacheDiagnosticManager diagnosticMgr
+    ) {
+        this.diagnosticMgr = add(mgrs, diagnosticMgr);
         this.mvccMgr = add(mgrs, mvccMgr);
         this.verMgr = add(mgrs, verMgr);
         this.txMgr = add(mgrs, txMgr);
@@ -448,6 +485,9 @@ public class GridCacheSharedContext<K, V> {
         this.affMgr = add(mgrs, affMgr);
         this.ioMgr = add(mgrs, ioMgr);
         this.ttlMgr = add(mgrs, ttlMgr);
+        this.evictMgr = add(mgrs, evictMgr);
+        this.mvccCachingMgr = add(mgrs, mvccCachingMgr);
+        this.deadlockDetectionMgr = add(mgrs, deadlockDetectionMgr);
     }
 
     /**
@@ -554,7 +594,7 @@ public class GridCacheSharedContext<K, V> {
      *
      * @param cacheId Cache id.
      */
-    public @Nullable CacheObjectContext cacheObjectContext(int cacheId) throws IgniteCheckedException {
+    @Nullable public CacheObjectContext cacheObjectContext(int cacheId) throws IgniteCheckedException {
         GridCacheContext<K, V> ctx = ctxMap.get(cacheId);
 
         if (ctx != null)
@@ -780,6 +820,41 @@ public class GridCacheSharedContext<K, V> {
     }
 
     /**
+     * @return Cache mvcc coordinator manager.
+     */
+    public MvccProcessor coordinators() {
+        return kernalCtx.coordinators();
+    }
+
+    /**
+     * @return Partition evict manager.
+     */
+    public PartitionsEvictManager evict() {
+        return evictMgr;
+    }
+
+    /**
+     * @return Mvcc transaction enlist caching manager.
+     */
+    public MvccCachingManager mvccCaching() {
+        return mvccCachingMgr;
+    }
+
+    /**
+     * @return Diagnostic manager.
+     */
+    public CacheDiagnosticManager diagnostic(){
+        return diagnosticMgr;
+    }
+
+    /**
+     * @return Deadlock detection manager.
+     */
+    public DeadlockDetectionManager deadlockDetectionMgr() {
+        return deadlockDetectionMgr;
+    }
+
+    /**
      * @return Node ID.
      */
     public UUID localNodeId() {
@@ -834,7 +909,7 @@ public class GridCacheSharedContext<K, V> {
     /**
      * Captures all ongoing operations that we need to wait before we can proceed to the next topology version.
      * This method must be called only after
-     * {@link GridDhtPartitionTopology#updateTopologyVersion(GridDhtTopologyFuture, DiscoCache, long, boolean)}
+     * {@link GridDhtPartitionTopology#updateTopologyVersion}
      * method is called so that all new updates will wait to switch to the new version.
      * This method will capture:
      * <ul>
@@ -985,10 +1060,9 @@ public class GridCacheSharedContext<K, V> {
 
     /**
      * @param tx Transaction to rollback.
-     * @throws IgniteCheckedException If failed.
      * @return Rollback future.
      */
-    public IgniteInternalFuture rollbackTxAsync(GridNearTxLocal tx) throws IgniteCheckedException {
+    public IgniteInternalFuture rollbackTxAsync(GridNearTxLocal tx) {
         boolean clearThreadMap = txMgr.threadLocalTx(null) == tx;
 
         if (clearThreadMap)
@@ -1075,5 +1149,34 @@ public class GridCacheSharedContext<K, V> {
      */
     private int dhtAtomicUpdateIndex(GridCacheVersion ver) {
         return U.safeAbs(ver.hashCode()) % dhtAtomicUpdCnt.length();
+    }
+
+    /**
+     * @return {@code true} if cluster is in read-only mode.
+     */
+    public boolean readOnlyMode() {
+        return readOnlyMode;
+    }
+
+    /**
+     * @param readOnlyMode Read-only flag.
+     */
+    public void readOnlyMode(boolean readOnlyMode) {
+        this.readOnlyMode = readOnlyMode;
+    }
+
+    /**
+     * For test purposes.
+     * @param txMgr Tx manager.
+     */
+    public void setTxManager(IgniteTxManager txMgr) {
+        this.txMgr = txMgr;
+    }
+
+    /**
+     * @return {@code True} if lazy memory allocation enabled. {@code False} otherwise.
+     */
+    public boolean isLazyMemoryAllocation(@Nullable DataRegion region) {
+        return gridConfig().isClientMode() || region == null || region.config().isLazyMemoryAllocation();
     }
 }

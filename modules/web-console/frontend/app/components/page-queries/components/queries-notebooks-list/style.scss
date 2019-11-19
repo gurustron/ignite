@@ -23,8 +23,11 @@
 
 .queries-notebooks-list {
   grid-no-data {
-    top: -6px;
     background: white;
+  }
+
+  .ui-grid-render-container-left:before {
+    display: none;
   }
 
   .notebook-name {

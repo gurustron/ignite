@@ -21,7 +21,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.affinity.Affinity;
@@ -30,10 +29,10 @@ import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.compute.ComputeJobResultPolicy;
 import org.apache.ignite.compute.ComputeTaskAdapter;
-import org.apache.ignite.resources.IgniteInstanceResource;
-
 import org.apache.ignite.ml.genetic.parameter.GAConfiguration;
 import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
+import org.apache.ignite.resources.IgniteInstanceResource;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Responsible for assigning 2 X 'parent' chromosomes to produce 2 X 'child' chromosomes.
@@ -48,26 +47,20 @@ import org.apache.ignite.ml.genetic.parameter.GAGridConstants;
 public class CrossOverTask extends ComputeTaskAdapter<List<Long>, Boolean> {
     /** Ignite instance */
     @IgniteInstanceResource
-    private Ignite ignite = null;
+    private Ignite ignite;
 
     /** GAConfiguration */
-    private GAConfiguration config = null;
+    private GAConfiguration cfg;
 
     /**
-     * @param config GAConfiguration
+     * @param cfg GAConfiguration
      */
-    public CrossOverTask(GAConfiguration config) {
-        this.config = config;
+    public CrossOverTask(GAConfiguration cfg) {
+        this.cfg = cfg;
     }
 
-    /**
-     * Map Jobs to nodes using data affinity.
-     *
-     * @param nodes Cluster Nodes
-     * @param chromosomeKeys Primary keys for respective chromosomes
-     * @return A map of nodes to jobs.
-     */
-    public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
+    /** {@inheritDoc} */
+    @NotNull @Override public Map map(List<ClusterNode> nodes, List<Long> chromosomeKeys) throws IgniteException {
 
         Map<ComputeJob, ClusterNode> map = new HashMap<>();
 
@@ -82,23 +75,14 @@ public class CrossOverTask extends ComputeTaskAdapter<List<Long>, Boolean> {
         return map;
     }
 
-    /**
-     * We return TRUE if success, else Exection is thrown.
-     *
-     * @param list ComputeJobResult
-     * @return Boolean value; if operationa was successful return true, otherwise Exception
-     */
-    public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
+    /** {@inheritDoc} */
+    @Override public Boolean reduce(List<ComputeJobResult> list) throws IgniteException {
         // TODO Auto-generated method stub
         return Boolean.TRUE;
     }
 
-    /**
-     * @param res ComputeJobResult
-     * @param rcvd List of ComputeJobResult
-     * @return ComputeJobResultPolicy
-     */
-    public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
+    /** {@inheritDoc} */
+    @Override public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
         IgniteException err = res.getException();
 
         if (err != null)
@@ -110,26 +94,26 @@ public class CrossOverTask extends ComputeTaskAdapter<List<Long>, Boolean> {
     }
 
     /**
-     * Helper method to help assign ComputeJobs to respective ClusterNodes
+     * Helper method to help assign ComputeJobs to respective ClusterNodes.
      *
-     * @param clusterNode
-     * @param keys Primary keys of Chromosomes
-     * @param map Nodes where jobs will be sent
-     * @return A map of ComputeJob/ClusterNode's
+     * @param clusterNode Cluster node.
+     * @param keys Primary keys of Chromosomes.
+     * @param map Nodes where jobs will be sent.
+     * @return A map of ComputeJob/ClusterNode's.
      */
     private Map<ComputeJob, ClusterNode> setupCrossOver(ClusterNode clusterNode, List<Long> keys,
         Map<ComputeJob, ClusterNode> map) {
         // Calculate number of Jobs = keys / 2
         // as we desire pairs of Chromosomes to be swapped
-        int numberOfJobs = keys.size() / 2;
+        int numOfJobs = keys.size() / 2;
         int k = 0;
-        for (int i = 0; i < numberOfJobs; i++) {
+        for (int i = 0; i < numOfJobs; i++) {
             Long key1 = keys.get(k);
             Long key2 = keys.get(k + 1);
 
-            CrossOverJob job = new CrossOverJob(key1, key2, this.config.getCrossOverRate());
+            CrossOverJob job = new CrossOverJob(key1, key2, this.cfg.getCrossOverRate());
             map.put(job, clusterNode);
-            k = k + 2;
+            k += 2;
         }
         return map;
     }

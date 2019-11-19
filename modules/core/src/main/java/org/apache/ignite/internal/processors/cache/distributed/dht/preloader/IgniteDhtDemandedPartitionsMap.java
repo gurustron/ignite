@@ -19,14 +19,11 @@
 package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Set;
+import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Map of partitions demanded during rebalancing.
@@ -39,17 +36,11 @@ public class IgniteDhtDemandedPartitionsMap implements Serializable {
     private CachePartitionPartialCountersMap historical;
 
     /** Set of partitions that will be preloaded from all it's current data. */
+    @GridToStringInclude
     private Set<Integer> full;
 
-    public IgniteDhtDemandedPartitionsMap(
-        @Nullable CachePartitionPartialCountersMap historical,
-        @Nullable Set<Integer> full)
-    {
-        this.historical = historical;
-        this.full = full;
-    }
-
     public IgniteDhtDemandedPartitionsMap() {
+        // No-op.
     }
 
     /**
@@ -71,6 +62,7 @@ public class IgniteDhtDemandedPartitionsMap implements Serializable {
 
     /**
      * Adds partition for preloading from all current data.
+     *
      * @param partId Partition ID.
      */
     public void addFull(int partId) {
@@ -84,6 +76,7 @@ public class IgniteDhtDemandedPartitionsMap implements Serializable {
 
     /**
      * Removes partition.
+     *
      * @param partId Partition ID.
      * @return {@code True} if changed.
      */
@@ -153,66 +146,24 @@ public class IgniteDhtDemandedPartitionsMap implements Serializable {
         return Collections.unmodifiableSet(full);
     }
 
-    /** {@inheritDoc} */
-    @Override public String toString() {
-        return S.toString(IgniteDhtDemandedPartitionsMap.class, this);
-    }
+    /** */
+    public Set<Integer> historicalSet() {
+        if (historical == null)
+            return Collections.emptySet();
 
-    /**
-     * @return String representation of partitions list.
-     */
-    String partitionsList() {
-        List<Integer> s = new ArrayList<>(size());
-
-        s.addAll(fullSet());
+        Set<Integer> historical = new HashSet<>(historicalMap().size());
 
         for (int i = 0; i < historicalMap().size(); i++) {
             int p = historicalMap().partitionAt(i);
 
-            assert !s.contains(p);
-
-            s.add(p);
+            historical.add(p);
         }
 
-        Collections.sort(s);
+        return historical;
+    }
 
-        StringBuilder sb = new StringBuilder();
-
-        int start = -1;
-
-        int prev = -1;
-
-        Iterator<Integer> sit = s.iterator();
-
-        while (sit.hasNext()) {
-            int p = sit.next();
-
-            if (start == -1) {
-                start = p;
-                prev = p;
-            }
-
-            if (prev < p - 1) {
-                sb.append(start);
-
-                if (start != prev)
-                    sb.append("-").append(prev);
-
-                sb.append(", ");
-
-                start = p;
-            }
-
-            if (!sit.hasNext()) {
-                sb.append(start);
-
-                if (start != p)
-                    sb.append("-").append(p);
-            }
-
-            prev = p;
-        }
-
-        return sb.toString();
+    /** {@inheritDoc} */
+    @Override public String toString() {
+        return S.toString(IgniteDhtDemandedPartitionsMap.class, this);
     }
 }

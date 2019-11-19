@@ -19,7 +19,6 @@ package org.apache.ignite.platform;
 
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.binary.BinaryObjectException;
-import org.apache.ignite.cache.CacheAtomicUpdateTimeoutException;
 import org.apache.ignite.cluster.ClusterGroupEmptyException;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.cluster.ClusterTopologyException;
@@ -28,6 +27,7 @@ import org.apache.ignite.lang.IgniteFutureCancelledException;
 import org.apache.ignite.services.ServiceConfiguration;
 import org.apache.ignite.services.ServiceDeploymentException;
 import org.apache.ignite.transactions.*;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.cache.CacheException;
@@ -44,7 +44,7 @@ import java.util.Map;
 @SuppressWarnings("unused")  // Used by .NET ExceptionsTest.
 public class PlatformExceptionTask extends ComputeTaskAdapter<String, String> {
     /** {@inheritDoc} */
-    @Nullable @Override public Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
+    @NotNull @Override public Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
         @Nullable String arg) {
         assert arg != null;
 
@@ -65,7 +65,6 @@ public class PlatformExceptionTask extends ComputeTaskAdapter<String, String> {
             case "CacheLoaderException": throw new CacheLoaderException(arg);
             case "CacheWriterException": throw new CacheWriterException(arg);
             case "EntryProcessorException": throw new EntryProcessorException(arg);
-            case "CacheAtomicUpdateTimeoutException": throw new CacheAtomicUpdateTimeoutException(arg);
             case "TransactionOptimisticException": throw new TransactionOptimisticException(arg);
             case "TransactionTimeoutException": throw new TransactionTimeoutException(arg);
             case "TransactionRollbackException": throw new TransactionRollbackException(arg);

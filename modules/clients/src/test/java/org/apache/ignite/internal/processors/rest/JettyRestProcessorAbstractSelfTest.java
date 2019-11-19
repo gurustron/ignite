@@ -17,14 +17,10 @@
 
 package org.apache.ignite.internal.processors.rest;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.LineNumberReader;
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
-import java.net.URL;
-import java.net.URLConnection;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
@@ -34,16 +30,11 @@ import java.text.DateFormat;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
@@ -61,7 +52,6 @@ import org.apache.ignite.internal.processors.cache.IgniteCacheProxy;
 import org.apache.ignite.internal.processors.cache.query.GridCacheSqlIndexMetadata;
 import org.apache.ignite.internal.processors.cache.query.GridCacheSqlMetadata;
 import org.apache.ignite.internal.processors.rest.handlers.GridRestCommandHandler;
-import org.apache.ignite.internal.processors.rest.protocols.http.jetty.GridJettyObjectMapper;
 import org.apache.ignite.internal.util.typedef.C1;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.P1;
@@ -147,12 +137,13 @@ import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.junit.Test;
 
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_JETTY_PORT;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheMode.REPLICATED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_ASYNC;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
+import static org.apache.ignite.configuration.WALMode.NONE;
 import static org.apache.ignite.internal.IgniteVersionUtils.VER_STR;
 import static org.apache.ignite.internal.processors.query.QueryUtils.TEMPLATE_PARTITIONED;
 import static org.apache.ignite.internal.processors.query.QueryUtils.TEMPLATE_REPLICATED;
@@ -163,118 +154,29 @@ import static org.apache.ignite.internal.processors.rest.GridRestResponse.STATUS
  * Tests for Jetty REST protocol.
  */
 @SuppressWarnings("unchecked")
-public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestProcessorSelfTest {
-    /** Grid count. */
-    private static final int GRID_CNT = 3;
-
+public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProcessorCommonSelfTest {
     /** Used to sent request charset. */
     private static final String CHARSET = StandardCharsets.UTF_8.name();
 
-    /** JSON to java mapper. */
-    private static final ObjectMapper JSON_MAPPER = new GridJettyObjectMapper();
+    /** */
+    private static boolean memoryMetricsEnabled;
 
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
-        System.setProperty(IGNITE_JETTY_PORT, Integer.toString(restPort()));
-
         super.beforeTestsStarted();
 
         initCache();
     }
 
     /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
-        System.clearProperty(IGNITE_JETTY_PORT);
-    }
-
-    /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).removeAll();
-    }
 
-    /** {@inheritDoc} */
-    @Override protected int gridCount() {
-        return GRID_CNT;
-    }
+        if (memoryMetricsEnabled) {
+            memoryMetricsEnabled = false;
 
-    /**
-     * @return Port to use for rest. Needs to be changed over time because Jetty has some delay before port unbind.
-     */
-    protected abstract int restPort();
-
-    /**
-     * @return Test URL
-     */
-    protected String restUrl() {
-        return "http://" + LOC_HOST + ":" + restPort() + "/ignite?";
-    }
-
-    /**
-     * @return Security enabled flag. Should be the same with {@code ctx.security().enabled()}.
-     */
-    protected boolean securityEnabled() {
-        return false;
-    }
-
-    /**
-     * Execute REST command and return result.
-     *
-     * @param params Command parameters.
-     * @return Returned content.
-     * @throws Exception If failed.
-     */
-    protected String content(Map<String, String> params) throws Exception {
-        SB sb = new SB(restUrl());
-
-        for (Map.Entry<String, String> e : params.entrySet())
-            sb.a(e.getKey()).a('=').a(e.getValue()).a('&');
-
-        URL url = new URL(sb.toString());
-
-        URLConnection conn = url.openConnection();
-
-        String signature = signature();
-
-        if (signature != null)
-            conn.setRequestProperty("X-Signature", signature);
-
-        InputStream in = conn.getInputStream();
-
-        StringBuilder buf = new StringBuilder(256);
-
-        try (LineNumberReader rdr = new LineNumberReader(new InputStreamReader(in, "UTF-8"))) {
-            for (String line = rdr.readLine(); line != null; line = rdr.readLine())
-                buf.append(line);
+            restartGrid();
         }
-
-        return buf.toString();
-    }
-
-    /**
-     * @param cacheName Optional cache name.
-     * @param cmd REST command.
-     * @param params Command parameters.
-     * @return Returned content.
-     * @throws Exception If failed.
-     */
-    protected String content(String cacheName, GridRestCommand cmd, String... params) throws Exception {
-        Map<String, String> paramsMap = new LinkedHashMap<>();
-
-        if (cacheName != null)
-            paramsMap.put("cacheName", cacheName);
-
-        paramsMap.put("cmd", cmd.key());
-
-        if (params != null) {
-            assertEquals(0, params.length % 2);
-
-            for (int i = 0; i < params.length; i += 2)
-                paramsMap.put(params[i], params[i + 1]);
-        }
-
-        return content(paramsMap);
     }
 
     /**
@@ -345,17 +247,21 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     }
 
     /**
+     * Validates JSON response.
+     *
      * @param content Content to check.
      * @return REST result.
+     * @throws IOException If parsing failed.
      */
-    protected JsonNode jsonResponse(String content) throws IOException {
+    protected JsonNode validateJsonResponse(String content) throws IOException {
         assertNotNull(content);
         assertFalse(content.isEmpty());
 
         JsonNode node = JSON_MAPPER.readTree(content);
 
+        assertTrue("Unexpected error: " + node.get("error").asText(), node.get("error").isNull());
+
         assertEquals(STATUS_SUCCESS, node.get("successStatus").asInt());
-        assertTrue(node.get("error").isNull());
 
         assertNotSame(securityEnabled(), node.get("sessionToken").isNull());
 
@@ -392,6 +298,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGet() throws Exception {
         jcache().put("getKey", "getVal");
 
@@ -420,6 +327,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetBinaryObjects() throws Exception {
         Person p = new Person(1, "John", "Doe", 300);
 
@@ -448,7 +356,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
         // Test with SQL.
         SqlFieldsQuery qry = new SqlFieldsQuery(
             "create table employee(id integer primary key, name varchar(100), salary integer);" +
-            "insert into employee(id, name, salary) values (1, 'Alex', 300);"
+                "insert into employee(id, name, salary) values (1, 'Alex', 300);"
         );
 
         grid(0).context().query().querySqlFields(qry, true, false);
@@ -483,6 +391,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         JsonNode json = assertResponseSucceeded(ret, false);
         assertEquals(ref1.name, json.get("name").asText());
+        assertEquals(ref1.ref.toString(), json.get("ref").toString());
 
         ref2.ref(ref1);
 
@@ -515,6 +424,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testNullMapKeyAndValue() throws Exception {
         Map<String, String> map1 = new HashMap<>();
         map1.put(null, null);
@@ -526,7 +436,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Get command result: " + ret);
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(F.asMap("", null, "key", "value"), JSON_MAPPER.treeToValue(res, HashMap.class));
 
@@ -540,7 +450,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Get command result: " + ret);
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
         assertEquals(F.asMap("", "value", "key", null), JSON_MAPPER.treeToValue(res, HashMap.class));
     }
@@ -548,6 +458,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSimpleObject() throws Exception {
         SimplePerson p = new SimplePerson(1, "Test", java.sql.Date.valueOf("1977-01-26"), 1000.55, 39, "CIO", 25);
 
@@ -571,6 +482,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDate() throws Exception {
         java.util.Date utilDate = new java.util.Date();
 
@@ -608,6 +520,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUUID() throws Exception {
         UUID uuid = UUID.randomUUID();
 
@@ -633,6 +546,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTuple() throws Exception {
         T2 t = new T2("key", "value");
 
@@ -651,6 +565,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testCacheSize() throws Exception {
         jcache().removeAll();
 
@@ -666,12 +581,13 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testIgniteName() throws Exception {
         String ret = content(null, GridRestCommand.NAME);
 
         info("Name command result: " + ret);
 
-        assertEquals(getTestIgniteInstanceName(0), jsonResponse(ret).asText());
+        assertEquals(getTestIgniteInstanceName(0), validateJsonResponse(ret).asText());
     }
 
     /**
@@ -694,6 +610,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("GetOrCreateCache command result: " + ret);
 
+        validateJsonResponse(ret);
+
         IgniteCache<String, String> cache = grid(0).cache(cacheName);
 
         cache.put("1", "1");
@@ -712,13 +630,14 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         ret = content(cacheName, GridRestCommand.DESTROY_CACHE);
 
-        assertTrue(jsonResponse(ret).isNull());
+        assertTrue(validateJsonResponse(ret).isNull());
         assertNull(grid(0).cache(cacheName));
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetOrCreateCache() throws Exception {
         checkGetOrCreateAndDestroy("testCache", PARTITIONED, 0, FULL_SYNC, null, null);
 
@@ -768,6 +687,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetAll() throws Exception {
         final Map<String, String> entries = F.asMap("getKey1", "getVal1", "getKey2", "getVal2");
 
@@ -790,16 +710,18 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testIncorrectPut() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT, "key", "key0");
 
         assertResponseContainsError(ret,
-            "Failed to handle request: [req=CACHE_PUT, err=Failed to find mandatory parameter in request: val]");
+            "Failed to find mandatory parameter in request: val");
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testContainsKey() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -811,6 +733,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testContainsKeys() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
         grid(0).cache(DEFAULT_CACHE_NAME).put("key1", "val1");
@@ -826,6 +749,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetAndPut() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -842,6 +766,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetAndPutIfAbsent() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -858,6 +783,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutIfAbsent2() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT_IF_ABSENT,
             "key", "key0",
@@ -872,6 +798,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemoveValue() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -897,6 +824,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetAndRemove() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -910,6 +838,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReplaceValue() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -937,6 +866,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testGetAndReplace() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("key0", "val0");
 
@@ -953,11 +883,16 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDeactivateActivate() throws Exception {
         assertClusterState(true);
 
-        changeClusterState(false);
-        changeClusterState(true);
+        changeClusterState(GridRestCommand.CLUSTER_DEACTIVATE);
+        changeClusterState(GridRestCommand.CLUSTER_ACTIVATE);
+
+        // same for deprecated.
+        changeClusterState(GridRestCommand.CLUSTER_INACTIVE);
+        changeClusterState(GridRestCommand.CLUSTER_ACTIVE);
 
         initCache();
     }
@@ -965,6 +900,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPut() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT,
             "key", "putKey",
@@ -978,27 +914,11 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
         assertCacheOperation(ret, true);
     }
 
-    /** */
-    private void failIgnite_5874() {
-        DataStorageConfiguration dsCfg = ignite(0).configuration().getDataStorageConfiguration();
-
-        if (dsCfg.getDefaultDataRegionConfiguration().isPersistenceEnabled())
-            fail("IGNITE-5874");
-
-        if (!F.isEmpty(dsCfg.getDataRegionConfigurations())) {
-            for (DataRegionConfiguration dataRegCfg : dsCfg.getDataRegionConfigurations()) {
-                if (dataRegCfg.isPersistenceEnabled())
-                    fail("IGNITE-5874");
-            }
-        }
-    }
-
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutWithExpiration() throws Exception {
-        failIgnite_5874();
-
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT,
             "key", "putKey",
             "val", "putVal",
@@ -1017,6 +937,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testAdd() throws Exception {
         jcache().put("addKey1", "addVal1");
 
@@ -1034,9 +955,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testAddWithExpiration() throws Exception {
-        failIgnite_5874();
-
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_ADD,
             "key", "addKey",
             "val", "addVal",
@@ -1055,6 +975,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutAll() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT_ALL,
             "k1", "putKey1",
@@ -1074,6 +995,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemove() throws Exception {
         jcache().put("rmvKey", "rmvVal");
 
@@ -1091,6 +1013,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemoveAll() throws Exception {
         jcache().put("rmvKey1", "rmvVal1");
         jcache().put("rmvKey2", "rmvVal2");
@@ -1132,6 +1055,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testCas() throws Exception {
         jcache().put("casKey", "casOldVal");
 
@@ -1155,6 +1079,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReplace() throws Exception {
         jcache().put("repKey", "repOldVal");
 
@@ -1175,9 +1100,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReplaceWithExpiration() throws Exception {
-        failIgnite_5874();
-
         jcache().put("replaceKey", "replaceVal");
 
         assertEquals("replaceVal", jcache().get("replaceKey"));
@@ -1201,6 +1125,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testAppend() throws Exception {
         jcache().put("appendKey", "appendVal");
 
@@ -1217,6 +1142,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPrepend() throws Exception {
         jcache().put("prependKey", "prependVal");
 
@@ -1233,6 +1159,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testIncrement() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.ATOMIC_INCREMENT,
             "key", "incrKey",
@@ -1240,7 +1167,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "delta", "3"
         );
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(5, res.asInt());
         assertEquals(5, grid(0).atomicLong("incrKey", 0, true).get());
@@ -1250,7 +1177,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "delta", "10"
         );
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
         assertEquals(15, res.asInt());
         assertEquals(15, grid(0).atomicLong("incrKey", 0, true).get());
@@ -1259,6 +1186,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDecrement() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.ATOMIC_DECREMENT,
             "key", "decrKey",
@@ -1266,7 +1194,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "delta", "10"
         );
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(5, res.asInt());
         assertEquals(5, grid(0).atomicLong("decrKey", 0, true).get());
@@ -1276,7 +1204,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "delta", "3"
         );
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
         assertEquals(2, res.asInt());
         assertEquals(2, grid(0).atomicLong("decrKey", 0, true).get());
@@ -1285,6 +1213,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testCar() throws Exception {
         jcache().put("casKey", "casOldVal");
 
@@ -1305,6 +1234,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutIfAbsent() throws Exception {
         assertNull(jcache().localPeek("casKey"));
 
@@ -1323,6 +1253,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testCasRemove() throws Exception {
         jcache().put("casKey", "casVal");
 
@@ -1340,6 +1271,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMetrics() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_METRICS);
 
@@ -1429,6 +1361,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMetadataLocal() throws Exception {
         IgniteCacheProxy<?, ?> cache = F.first(grid(0).context().cache().publicCaches());
 
@@ -1444,7 +1377,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Cache metadata: " + ret);
 
-        JsonNode arrRes = jsonResponse(ret);
+        JsonNode arrRes = validateJsonResponse(ret);
 
         // TODO: IGNITE-7740 uncomment after IGNITE-7740 will be fixed.
         // assertEquals(cachesCnt, arrRes.size());
@@ -1457,7 +1390,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Cache metadata: " + ret);
 
-        arrRes = jsonResponse(ret);
+        arrRes = validateJsonResponse(ret);
 
         assertEquals(1, arrRes.size());
 
@@ -1470,6 +1403,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMetadataRemote() throws Exception {
         CacheConfiguration<Integer, String> partialCacheCfg = new CacheConfiguration<>("partial");
 
@@ -1484,7 +1418,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Cache metadata: " + ret);
 
-        JsonNode arrRes = jsonResponse(ret);
+        JsonNode arrRes = validateJsonResponse(ret);
 
         // TODO: IGNITE-7740 uncomment after IGNITE-7740 will be fixed.
         // int cachesCnt = grid(1).cacheNames().size();
@@ -1496,7 +1430,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Cache metadata with cacheName parameter: " + ret);
 
-        arrRes = jsonResponse(ret);
+        arrRes = validateJsonResponse(ret);
 
         assertEquals(1, arrRes.size());
 
@@ -1509,6 +1443,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTopology() throws Exception {
         String ret = content(null, GridRestCommand.TOPOLOGY,
             "attr", "false",
@@ -1517,9 +1452,9 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Topology command result: " + ret);
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
-        assertEquals(GRID_CNT, res.size());
+        assertEquals(gridCount(), res.size());
 
         for (JsonNode node : res) {
             assertTrue(node.get("attributes").isNull());
@@ -1551,11 +1486,31 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
                 assertEquals(publicCache.getConfiguration(CacheConfiguration.class).getCacheMode(), cacheMode);
             }
         }
+
+        // Test that caches not included.
+        ret = content(null, GridRestCommand.TOPOLOGY,
+            "attr", "false",
+            "mtr", "false",
+            "caches", "false"
+        );
+
+        info("Topology command result: " + ret);
+
+        res = validateJsonResponse(ret);
+
+        assertEquals(gridCount(), res.size());
+
+        for (JsonNode node : res) {
+            assertTrue(node.get("attributes").isNull());
+            assertTrue(node.get("metrics").isNull());
+            assertTrue(node.get("caches").isNull());
+        }
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testNode() throws Exception {
         String ret = content(null, GridRestCommand.NODE,
             "attr", "true",
@@ -1565,10 +1520,16 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Topology command result: " + ret);
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertTrue(res.get("attributes").isObject());
         assertTrue(res.get("metrics").isObject());
+
+        JsonNode caches = res.get("caches");
+
+        assertTrue(caches.isArray());
+        assertFalse(caches.isNull());
+        assertEquals(grid(0).context().cache().publicCaches().size(), caches.size());
 
         ret = content(null, GridRestCommand.NODE,
             "attr", "false",
@@ -1578,7 +1539,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Topology command result: " + ret);
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
         assertTrue(res.get("attributes").isNull());
         assertTrue(res.get("metrics").isNull());
@@ -1592,9 +1553,25 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Topology command result: " + ret);
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
         assertTrue(res.isNull());
+
+        // Check that caches not included.
+        ret = content(null, GridRestCommand.NODE,
+            "id", grid(0).localNode().id().toString(),
+            "attr", "false",
+            "mtr", "false",
+            "caches", "false"
+        );
+
+        info("Topology command result: " + ret);
+
+        res = validateJsonResponse(ret);
+
+        assertTrue(res.get("attributes").isNull());
+        assertTrue(res.get("metrics").isNull());
+        assertTrue(res.get("caches").isNull());
     }
 
     /**
@@ -1604,6 +1581,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testExe() throws Exception {
         String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.EXE);
 
@@ -1649,6 +1627,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testVisorGateway() throws Exception {
         ClusterNode locNode = grid(1).localNode();
 
@@ -2006,10 +1985,74 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
+    public void testDataRegionMetrics() throws Exception {
+        String ret = content(F.asMap("cmd", GridRestCommand.DATA_REGION_METRICS.key()));
+
+        JsonNode res = validateJsonResponse(ret);
+
+        assertTrue(res.size() > 0);
+
+        info(GridRestCommand.DATA_REGION_METRICS.key().toUpperCase() + " command result: " + ret);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDataStorageMetricsDisabled() throws Exception {
+        String ret = content(F.asMap("cmd", GridRestCommand.DATA_STORAGE_METRICS.key()));
+
+        JsonNode res = validateJsonResponse(ret);
+
+        assertTrue(res.asText().equalsIgnoreCase("Storage metrics are not enabled"));
+
+        info(GridRestCommand.DATA_STORAGE_METRICS.key().toUpperCase() + " command result: " + ret);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDataStorageMetricsEnabled() throws Exception {
+        if (!memoryMetricsEnabled) {
+            restartGrid();
+
+            memoryMetricsEnabled = true;
+        }
+
+        String ret = content(F.asMap("cmd", GridRestCommand.DATA_STORAGE_METRICS.key()));
+
+        assertNotNull(validateJsonResponse(ret));
+
+        info(GridRestCommand.DATA_STORAGE_METRICS.key().toUpperCase() + " command result: " + ret);
+    }
+
+    /**
+     * Restart grid.
+     *
+     * @throws Exception If failed.
+     */
+    protected void restartGrid() throws Exception {
+        stopAllGrids();
+
+        cleanPersistenceDir();
+
+        startGrids(gridCount());
+
+        grid(0).cluster().active(true);
+
+        initCache();
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
     public void testVersion() throws Exception {
         String ret = content(null, GridRestCommand.VERSION);
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(VER_STR, res.asText());
     }
@@ -2017,6 +2060,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryArgs() throws Exception {
         String qry = "salary > ? and salary <= ?";
 
@@ -2028,7 +2072,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "arg2", "2000"
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(2, items.size());
 
@@ -2038,13 +2082,14 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryScan() throws Exception {
         String ret = content("person", GridRestCommand.EXECUTE_SCAN_QUERY,
             "pageSize", "10",
             "cacheName", "person"
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(4, items.size());
 
@@ -2054,13 +2099,14 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFilterQueryScan() throws Exception {
         String ret = content("person", GridRestCommand.EXECUTE_SCAN_QUERY,
             "pageSize", "10",
             "className", ScanFilter.class.getName()
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(2, items.size());
 
@@ -2070,6 +2116,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testIncorrectFilterQueryScan() throws Exception {
         String clsName = ScanFilter.class.getName() + 1;
 
@@ -2084,6 +2131,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQuery() throws Exception {
         grid(0).cache(DEFAULT_CACHE_NAME).put("1", "1");
         grid(0).cache(DEFAULT_CACHE_NAME).put("2", "2");
@@ -2095,18 +2143,18 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "qry", URLEncoder.encode("select * from String", CHARSET)
         );
 
-        JsonNode qryId = jsonResponse(ret).get("queryId");
+        JsonNode qryId = validateJsonResponse(ret).get("queryId");
 
-        assertFalse(jsonResponse(ret).get("queryId").isNull());
+        assertFalse(validateJsonResponse(ret).get("queryId").isNull());
 
         ret = content(DEFAULT_CACHE_NAME, GridRestCommand.FETCH_SQL_QUERY,
             "pageSize", "1",
             "qryId", qryId.asText()
         );
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
-        JsonNode qryId0 = jsonResponse(ret).get("queryId");
+        JsonNode qryId0 = validateJsonResponse(ret).get("queryId");
 
         assertEquals(qryId0, qryId);
         assertFalse(res.get("last").asBoolean());
@@ -2116,9 +2164,9 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "qryId", qryId.asText()
         );
 
-        res = jsonResponse(ret);
+        res = validateJsonResponse(ret);
 
-        qryId0 = jsonResponse(ret).get("queryId");
+        qryId0 = validateJsonResponse(ret).get("queryId");
 
         assertEquals(qryId0, qryId);
         assertTrue(res.get("last").asBoolean());
@@ -2129,6 +2177,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDistributedJoinsQuery() throws Exception {
         String qry = "select * from Person, \"organization\".Organization " +
             "where \"organization\".Organization.id = Person.orgId " +
@@ -2142,7 +2191,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "arg1", "o1"
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(2, items.size());
 
@@ -2152,6 +2201,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSqlFieldsQuery() throws Exception {
         String qry = "select concat(firstName, ' ', lastName) from Person";
 
@@ -2160,7 +2210,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "qry", URLEncoder.encode(qry, CHARSET)
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(4, items.size());
 
@@ -2170,6 +2220,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDistributedJoinsSqlFieldsQuery() throws Exception {
         String qry = "select * from \"person\".Person p, \"organization\".Organization o where o.id = p.orgId";
 
@@ -2179,7 +2230,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "qry", URLEncoder.encode(qry, CHARSET)
         );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(4, items.size());
 
@@ -2189,6 +2240,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSqlFieldsMetadataQuery() throws Exception {
         String qry = "select firstName, lastName from Person";
 
@@ -2197,7 +2249,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "qry", URLEncoder.encode(qry, CHARSET)
         );
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         JsonNode items = res.get("items");
 
@@ -2219,6 +2271,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryClose() throws Exception {
         String qry = "salary > ? and salary <= ?";
 
@@ -2230,7 +2283,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
             "arg2", "2000"
         );
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(1, res.get("items").size());
 
@@ -2248,6 +2301,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryDelay() throws Exception {
         String qry = "salary > ? and salary <= ?";
 
@@ -2262,7 +2316,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
                 "arg2", "2000"
             );
 
-        JsonNode items = jsonResponse(ret).get("items");
+        JsonNode items = validateJsonResponse(ret).get("items");
 
         assertEquals(1, items.size());
 
@@ -2310,6 +2364,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTypedPut() throws Exception {
         // Test boolean type.
         putTypedValue("boolean", "true", "false", STATUS_SUCCESS);
@@ -2425,10 +2480,10 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
         putTypedValue("timestamp", "2018-03-18%2001:01:01", "error", STATUS_FAILED);
         putTypedValue("timestamp", "error", "error", STATUS_FAILED);
 
-        IgniteCache<Timestamp, Timestamp> cTimestamp = typedCache();
+        IgniteCache<Timestamp, Timestamp> cTs = typedCache();
 
-        assertEquals(Timestamp.valueOf("2017-01-01 02:02:02"), cTimestamp.get(Timestamp.valueOf("2018-02-18 01:01:01")));
-        assertEquals(Timestamp.valueOf("2018-05-05 05:05:05"), cTimestamp.get(Timestamp.valueOf("2018-01-01 01:01:01")));
+        assertEquals(Timestamp.valueOf("2017-01-01 02:02:02"), cTs.get(Timestamp.valueOf("2018-02-18 01:01:01")));
+        assertEquals(Timestamp.valueOf("2018-05-05 05:05:05"), cTs.get(Timestamp.valueOf("2018-01-01 01:01:01")));
 
         // Test UUID type.
         UUID k1 = UUID.fromString("121f5ae8-148d-11e8-b642-0ed5f89f718b");
@@ -2479,7 +2534,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         info("Command result: " + ret);
 
-        JsonNode json = jsonResponse(ret);
+        JsonNode json = validateJsonResponse(ret);
 
         assertEquals(exp, json.isObject() ? json.toString() : json.asText());
     }
@@ -2487,6 +2542,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTypedGet() throws Exception {
         // Test boolean type.
         IgniteCache<Boolean, Boolean> cBool = typedCache();
@@ -2625,18 +2681,12 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     }
 
     /**
-     * @return Signature.
-     * @throws Exception If failed.
-     */
-    protected abstract String signature() throws Exception;
-
-    /**
      * @return True if any query cursor is available.
      */
     private boolean queryCursorFound() {
         boolean found = false;
 
-        for (int i = 0; i < GRID_CNT; ++i) {
+        for (int i = 0; i < gridCount(); ++i) {
             Map<GridRestCommand, GridRestCommandHandler> handlers =
                 GridTestUtils.getFieldValue(grid(i).context().rest(), "handlers");
 
@@ -2781,6 +2831,19 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
         public void ref(CircularRef ref) {
             this.ref = ref;
         }
+
+        /** {@inheritDoc} */
+        @Override public String toString() {
+            SB sb = new SB();
+
+            sb.a('{')
+                .a('"').a("id").a('"').a(':').a(id).a(',')
+                .a('"').a("name").a('"').a(':').a('"').a(name).a('"').a(',')
+                .a('"').a("ref").a('"').a(':').a(ref)
+                .a('}');
+
+            return sb.toString();
+        }
     }
 
     /**
@@ -2917,7 +2980,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
          * @return This helper for chaining method calls.
          */
         public VisorGatewayArgument forNode(ClusterNode node) {
-            put("p1", node.id().toString());
+            put("p1", node != null ? node.id().toString() : null);
 
             return this;
         }
@@ -3083,9 +3146,15 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
 
         DataRegionConfiguration drCfg = new DataRegionConfiguration();
         drCfg.setName("testDataRegion");
-        drCfg.setMaxSize(100 * 1024 * 1024);
+        drCfg.setMaxSize(100L * 1024 * 1024);
+
+        if (memoryMetricsEnabled)
+            drCfg.setPersistenceEnabled(true);
 
         dsCfg.setDefaultDataRegionConfiguration(drCfg);
+
+        if (memoryMetricsEnabled)
+            dsCfg.setMetricsEnabled(true).setWalMode(NONE);
 
         cfg.setDataStorageConfiguration(dsCfg);
 
@@ -3102,7 +3171,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
         String ret = content("cmd", GridRestCommand.CLUSTER_CURRENT_STATE);
 
         info("Cluster state: " + ret);
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
         assertEquals(exp, res.asBoolean());
         assertEquals(exp, grid(0).cluster().active());
@@ -3111,18 +3180,17 @@ public abstract class JettyRestProcessorAbstractSelfTest extends AbstractRestPro
     /**
      * Change cluster state and test new state.
      *
-     * @param state Desired state.
+     * @param cmd Command.
      * @throws Exception If failed.
      */
-    private void changeClusterState(boolean state) throws Exception {
-        GridRestCommand cmd = state ? GridRestCommand.CLUSTER_ACTIVE : GridRestCommand.CLUSTER_INACTIVE;
-
+    private void changeClusterState(GridRestCommand cmd) throws Exception {
         String ret = content(null, cmd);
 
-        JsonNode res = jsonResponse(ret);
+        JsonNode res = validateJsonResponse(ret);
 
-        assertTrue(res.isNull());
+        assertFalse(res.isNull());
+        assertTrue(res.asText().startsWith(cmd.key()));
 
-        assertClusterState(state);
+        assertClusterState(cmd == GridRestCommand.CLUSTER_ACTIVATE || cmd == GridRestCommand.CLUSTER_ACTIVE);
     }
 }

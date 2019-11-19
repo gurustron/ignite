@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.query.continuous;
 
+import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -28,6 +29,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -55,26 +57,28 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheObject;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheManagerAdapter;
 import org.apache.ignite.internal.processors.cache.IgniteCacheProxy;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicAbstractUpdateFuture;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.continuous.GridContinuousHandler;
+import org.apache.ignite.internal.processors.timeout.GridTimeoutProcessor;
+import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI2;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgniteAsyncCallback;
 import org.apache.ignite.lang.IgniteClosure;
 import org.apache.ignite.lang.IgniteOutClosure;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.plugin.security.SecurityPermission;
 import org.apache.ignite.resources.LoggerResource;
 import org.jetbrains.annotations.Nullable;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static javax.cache.event.EventType.CREATED;
 import static javax.cache.event.EventType.EXPIRED;
@@ -124,6 +128,28 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
     /** Ordered topic prefix. */
     private String topicPrefix;
 
+    /** Cancelable future task for backup cleaner */
+    private GridTimeoutProcessor.CancelableTask cancelableTask;
+
+    /** {@inheritDoc} */
+    @Override protected void stop0(boolean cancel, boolean destroy) {
+        if (cancelableTask != null) {
+            cancelableTask.close();
+
+            cancelableTask = null;
+        }
+    }
+
+    /**
+     * USED ONLY FOR TESTING.
+     *
+     * @return Internal cancelable future task for backup cleaner.
+     */
+    /*@java.test.only*/
+    protected GridTimeoutProcessor.CancelableTask getCancelableTask() {
+        return cancelableTask;
+    }
+
     /** {@inheritDoc} */
     @Override protected void start0() throws IgniteCheckedException {
         // Append cache name to the topic.
@@ -140,7 +166,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                     }
                 });
 
-            cctx.time().schedule(new BackupCleaner(lsnrs, cctx.kernalContext()), BACKUP_ACK_FREQ, BACKUP_ACK_FREQ);
+            cancelableTask = cctx.time().schedule(new BackupCleaner(lsnrs, cctx.kernalContext()), BACKUP_ACK_FREQ, BACKUP_ACK_FREQ);
         }
     }
 
@@ -168,6 +194,16 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                     log.debug("Failed to stop JCache entry listener: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * @param tx Transaction.
+     * @return {@code True} if should notify continuous query manager.
+     */
+    public boolean notifyContinuousQueries(@Nullable IgniteInternalTx tx) {
+        return cctx.isLocal() ||
+            cctx.isReplicated() ||
+            (!cctx.isNear() && !(tx != null && tx.onePhaseCommit() && !tx.local()));
     }
 
     /**
@@ -222,6 +258,37 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             skipCtx = lsnr.skipUpdateCounter(cctx, skipCtx, part, cntr, topVer, primary);
 
         return skipCtx;
+    }
+
+    /**
+     * For cache updates in shared cache group need notify others caches CQ listeners
+     * that generated counter should be skipped.
+     *
+     * @param cctx Cache context.
+     * @param part Partition.
+     * @param topVer Topology version.
+     * @param gaps Even-length array of pairs [start, end] for each gap.
+     */
+    @Nullable public void closeBackupUpdateCountersGaps(GridCacheContext cctx,
+        int part,
+        AffinityTopologyVersion topVer,
+        GridLongList gaps) {
+        assert gaps != null && gaps.size() % 2 == 0;
+
+        for (int i = 0; i < gaps.size() / 2; i++) {
+            long gapStart = gaps.get(i * 2);
+            long gapStop = gaps.get(i * 2 + 1);
+
+            /*
+             * No user listeners should be called by this invocation. In the common case of partitioned cache or
+             * replicated cache with non-local-only listener gaps (dummy filtered CQ events) will be added to the
+             * backup queue without passing it to any listener. In the special case of local-only listener on
+             * replicated cache there is no backup queues used at all and therefore no gaps occur - all unfiltered
+             * events are passed to listeners upon arrive.
+             */
+            for (long cntr = gapStart; cntr <= gapStop; cntr++)
+                skipUpdateEvent(lsnrs, null, part, cntr, false, topVer);
+        }
     }
 
     /**
@@ -335,7 +402,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         boolean recordIgniteEvt = primary && !internal && cctx.events().isRecordable(EVT_CACHE_QUERY_OBJECT_READ);
 
         for (CacheContinuousQueryListener lsnr : lsnrCol.values()) {
-            if (preload && !lsnr.notifyExisting())
+            if (preload && !lsnr.notifyExisting() || lsnr.isPrimaryOnly() && !primary)
                 continue;
 
             if (!initialized) {
@@ -356,7 +423,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 cctx.cacheId(),
                 evtType,
                 key,
-                newVal,
+                (!internal && evtType == REMOVED && lsnr.oldValueRequired()) ? oldVal : newVal,
                 lsnr.oldValueRequired() ? oldVal : null,
                 lsnr.keepBinary(),
                 partId,
@@ -364,7 +431,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 topVer,
                 (byte)0);
 
-            IgniteCacheProxy jcache = cctx.kernalContext().cache().jcacheProxy(cctx.name());
+            IgniteCacheProxy jcache = cctx.kernalContext().cache().jcacheProxy(cctx.name(), true);
 
             assert jcache != null : "Failed to get cache proxy [name=" + cctx.name() +
                 ", locStart=" + cctx.startTopologyVersion() +
@@ -418,7 +485,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                     cctx.cacheId(),
                     EXPIRED,
                     key,
-                    null,
+                    lsnr.oldValueRequired() ? oldVal : null,
                     lsnr.oldValueRequired() ? oldVal : null,
                     lsnr.keepBinary(),
                     e.partition(),
@@ -462,8 +529,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         if (rmtTransFactory != null) {
             clsr = new IgniteOutClosure<CacheContinuousQueryHandler>() {
                 @Override public CacheContinuousQueryHandler apply() {
-                    assert locTransLsnr != null;
-
                     return new CacheContinuousQueryHandlerV3(
                         cctx.name(),
                         TOPIC_CACHE.topic(topicPrefix, cctx.localNodeId(), seq.getAndIncrement()),
@@ -480,8 +545,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         else if (rmtFilterFactory != null) {
             clsr = new IgniteOutClosure<CacheContinuousQueryHandler>() {
                 @Override public CacheContinuousQueryHandler apply() {
-                    assert locLsnr != null;
-
                     return new CacheContinuousQueryHandlerV2(
                         cctx.name(),
                         TOPIC_CACHE.topic(topicPrefix, cctx.localNodeId(), seq.getAndIncrement()),
@@ -498,7 +561,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         else {
             clsr = new IgniteOutClosure<CacheContinuousQueryHandler>() {
                 @Override public CacheContinuousQueryHandler apply() {
-                    assert locLsnr != null;
                     assert locTransLsnr == null;
 
                     return new CacheContinuousQueryHandler(
@@ -532,6 +594,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
      * @param rmtFilter Remote filter.
      * @param loc Local flag.
      * @param notifyExisting Notify existing flag.
+     * @param sync Synchronous flag.
      * @return Continuous routine ID.
      * @throws IgniteCheckedException In case of error.
      */
@@ -539,7 +602,8 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         final CacheEntryEventSerializableFilter rmtFilter,
         final boolean loc,
         final boolean notifyExisting,
-        final boolean ignoreClassNotFound)
+        final boolean ignoreClassNotFound,
+        final boolean sync)
         throws IgniteCheckedException
     {
         return executeQuery0(
@@ -552,7 +616,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                         locLsnr,
                         rmtFilter,
                         true,
-                        false,
+                        sync,
                         true,
                         ignoreClassNotFound);
                 }
@@ -670,12 +734,14 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
         final CacheContinuousQueryHandler hnd = clsr.apply();
 
+        boolean locOnly = cctx.isLocal() || loc;
+
         hnd.taskNameHash(taskNameHash);
         hnd.skipPrimaryCheck(skipPrimaryCheck);
         hnd.notifyExisting(notifyExisting);
         hnd.internal(internal);
         hnd.keepBinary(keepBinary);
-        hnd.localCache(cctx.isLocal());
+        hnd.localOnly(locOnly);
 
         IgnitePredicate<ClusterNode> pred = (loc || cctx.config().getCacheMode() == CacheMode.LOCAL) ?
             F.nodeForNodeId(cctx.localNodeId()) : cctx.group().nodeFilter();
@@ -687,13 +753,13 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         try {
             id = cctx.kernalContext().continuous().startRoutine(
                 hnd,
-                internal && loc,
+                locOnly,
                 bufSize,
                 timeInterval,
                 autoUnsubscribe,
                 pred).get();
 
-            if (hnd.isQuery() && cctx.userCache() && !onStart)
+            if (hnd.isQuery() && cctx.userCache() && !locOnly && !onStart)
                 hnd.waitTopologyFuture(cctx.kernalContext());
         }
         catch (NodeStoppingException e) {
@@ -703,7 +769,8 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         catch (IgniteCheckedException e) {
             log.warning("Failed to start continuous query.", e);
 
-            cctx.kernalContext().continuous().stopRoutine(id);
+            if (id != null)
+                cctx.kernalContext().continuous().stopRoutine(id);
 
             throw new IgniteCheckedException("Failed to start continuous query.", e);
         }
@@ -711,10 +778,13 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         if (notifyExisting) {
             assert locLsnr != null : "Local listener can't be null if notification for existing entries are enabled";
 
-            final Iterator<CacheDataRow> it = cctx.offheap().cacheIterator(cctx.cacheId(),
+            final Iterator<CacheDataRow> it = cctx.offheap().cacheIterator(
+                cctx.cacheId(),
                 true,
                 true,
-                AffinityTopologyVersion.NONE);
+                AffinityTopologyVersion.NONE,
+                null,
+                null);
 
             locLsnr.onUpdated(new Iterable<CacheEntryEvent>() {
                 @Override public Iterator<CacheEntryEvent> iterator() {
@@ -769,7 +839,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                                     cctx.kernalContext().cache().jcache(cctx.name()),
                                     cctx, entry);
 
-                                if (hnd.getEventFilter() != null && !hnd.getEventFilter().evaluate(next))
+                                if (!hnd.filter(next))
                                     next = null;
                             }
                         }
@@ -851,9 +921,11 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
      * @param internal Internal flag.
      * @return Whether listener was actually registered.
      */
-    GridContinuousHandler.RegisterStatus registerListener(UUID lsnrId,
+    GridContinuousHandler.RegisterStatus registerListener(
+        UUID lsnrId,
         CacheContinuousQueryListener lsnr,
-        boolean internal) {
+        boolean internal
+    ) {
         boolean added;
 
         if (internal) {
@@ -863,24 +935,29 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 intLsnrCnt.incrementAndGet();
         }
         else {
-            synchronized (this) {
-                if (lsnrCnt.get() == 0) {
-                    if (cctx.group().sharedGroup() && !cctx.isLocal())
-                        cctx.group().addCacheWithContinuousQuery(cctx);
-                }
+            cctx.group().listenerLock().writeLock().lock();
 
+            try {
                 added = lsnrs.putIfAbsent(lsnrId, lsnr) == null;
 
-                if (added)
+                if (added) {
                     lsnrCnt.incrementAndGet();
-            }
 
-            if (added)
-                lsnr.onExecution();
+                    lsnr.onRegister();
+
+                    if (lsnrCnt.get() == 1) {
+                        if (cctx.group().sharedGroup() && !cctx.isLocal())
+                            cctx.group().addCacheWithContinuousQuery(cctx);
+                    }
+                }
+            }
+            finally {
+                cctx.group().listenerLock().writeLock().unlock();
+            }
         }
 
-        return added ? GridContinuousHandler.RegisterStatus.REGISTERED :
-            GridContinuousHandler.RegisterStatus.NOT_REGISTERED;
+        return added ? GridContinuousHandler.RegisterStatus.REGISTERED
+            : GridContinuousHandler.RegisterStatus.NOT_REGISTERED;
     }
 
     /**
@@ -898,13 +975,18 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             }
         }
         else {
-            synchronized (this) {
+            cctx.group().listenerLock().writeLock().lock();
+
+            try {
                 if ((lsnr = lsnrs.remove(id)) != null) {
                     int cnt = lsnrCnt.decrementAndGet();
 
                     if (cctx.group().sharedGroup() && cnt == 0 && !cctx.isLocal())
                         cctx.group().removeCacheWithContinuousQuery(cctx);
                 }
+            }
+            finally {
+                cctx.group().listenerLock().writeLock().unlock();
             }
 
             if (lsnr != null)
@@ -927,6 +1009,9 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
         /** */
         private volatile UUID routineId;
+
+        /** */
+        private volatile JCacheQueryLocalListener locLsnr;
 
         /**
          * @param cfg Listener configuration.
@@ -963,7 +1048,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
             final byte types0 = types;
 
-            final CacheEntryUpdatedListener locLsnr = new JCacheQueryLocalListener(
+            locLsnr = new JCacheQueryLocalListener(
                 locLsnrImpl,
                 log);
 
@@ -1037,13 +1122,15 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 cctx.kernalContext().continuous().stopRoutine(routineId0).get();
 
             cctx.config().removeCacheEntryListenerConfiguration(cfg);
+
+            U.closeQuiet(locLsnr);
         }
     }
 
     /**
      *
      */
-    static class JCacheQueryLocalListener<K, V> implements CacheEntryUpdatedListener<K, V> {
+    static class JCacheQueryLocalListener<K, V> implements CacheEntryUpdatedListener<K, V>, Closeable {
         /** */
         final CacheEntryListener<K, V> impl;
 
@@ -1110,7 +1197,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
          * @param evt Event.
          * @return Singleton iterable.
          */
-        @SuppressWarnings("unchecked")
         private Iterable<CacheEntryEvent<? extends K, ? extends V>> singleton(
             CacheEntryEvent<? extends K, ? extends V> evt) {
             assert evt instanceof CacheContinuousQueryEvent;
@@ -1122,11 +1208,10 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             return evts;
         }
 
-        /**
-         * @return {@code True} if listener should be executed in non-system thread.
-         */
-        protected boolean async() {
-            return U.hasAnnotation(impl, IgniteAsyncCallback.class);
+        /** {@inheritDoc} */
+        @Override public void close() throws IOException {
+            if (impl instanceof Closeable)
+                U.closeQuiet((Closeable)impl);
         }
     }
 
@@ -1184,17 +1269,9 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         }
 
         /** {@inheritDoc} */
-        @SuppressWarnings("unchecked")
         @Override public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
             impl = (CacheEntryEventFilter)in.readObject();
             types = in.readByte();
-        }
-
-        /**
-         * @return {@code True} if filter should be executed in non-system thread.
-         */
-        protected boolean async() {
-            return U.hasAnnotation(impl, IgniteAsyncCallback.class);
         }
 
         /**

@@ -18,6 +18,7 @@
 namespace Apache.Ignite.Core.Tests.Client
 {
     using System;
+    using System.Collections.Generic;
     using System.Linq;
     using System.Net;
     using Apache.Ignite.Core.Binary;
@@ -55,18 +56,19 @@ namespace Apache.Ignite.Core.Tests.Client
         }
 
         /// <summary>
-        /// Fixture tear down.
+        /// Fixture set up.
         /// </summary>
         [TestFixtureSetUp]
-        public void FixtureSetUp()
+        public virtual void FixtureSetUp()
         {
             var cfg = GetIgniteConfiguration();
             Ignition.Start(cfg);
 
-            cfg.AutoGenerateIgniteInstanceName = true;
-
             for (var i = 1; i < _gridCount; i++)
             {
+                cfg = GetIgniteConfiguration();
+                cfg.AutoGenerateIgniteInstanceName = true;
+
                 Ignition.Start(cfg);
             }
 
@@ -91,7 +93,7 @@ namespace Apache.Ignite.Core.Tests.Client
             var cache = GetCache<int>();
             cache.RemoveAll();
             cache.Clear();
-            
+
             Assert.AreEqual(0, cache.GetSize(CachePeekMode.All));
             Assert.AreEqual(0, GetClientCache<int>().GetSize(CachePeekMode.All));
         }
@@ -140,7 +142,8 @@ namespace Apache.Ignite.Core.Tests.Client
         {
             return new IgniteClientConfiguration
             {
-                Host = IPAddress.Loopback.ToString()
+                Endpoints = new List<string> { IPAddress.Loopback.ToString() },
+                SocketTimeout = TimeSpan.FromSeconds(15)
             };
         }
 
@@ -206,7 +209,17 @@ namespace Apache.Ignite.Core.Tests.Client
                 }
             }
 
-            AssertExtensions.ReflectionEqual(cfg, cfg2);
+            HashSet<string> ignoredProps = null;
+
+            if (cfg.ExpiryPolicyFactory != null && cfg2.ExpiryPolicyFactory != null)
+            {
+                ignoredProps = new HashSet<string> {"ExpiryPolicyFactory"};
+
+                AssertExtensions.ReflectionEqual(cfg.ExpiryPolicyFactory.CreateInstance(),
+                    cfg2.ExpiryPolicyFactory.CreateInstance());
+            }
+
+            AssertExtensions.ReflectionEqual(cfg, cfg2, ignoredProperties : ignoredProps);
         }
     }
 }

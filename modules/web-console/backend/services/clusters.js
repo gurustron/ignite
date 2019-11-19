@@ -41,7 +41,7 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
      *
      * @param {RemoveResult} result - The results of remove operation.
      */
-    const convertRemoveStatus = ({result}) => ({rowsAffected: result.n});
+    const convertRemoveStatus = (result) => ({rowsAffected: result.n});
 
     /**
      * Update existing cluster.
@@ -52,11 +52,11 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
     const update = (cluster) => {
         const clusterId = cluster._id;
 
-        return mongo.Cluster.update({_id: clusterId}, cluster, {upsert: true}).exec()
-            .then(() => mongo.Cache.update({_id: {$in: cluster.caches}}, {$addToSet: {clusters: clusterId}}, {multi: true}).exec())
-            .then(() => mongo.Cache.update({_id: {$nin: cluster.caches}}, {$pull: {clusters: clusterId}}, {multi: true}).exec())
-            .then(() => mongo.Igfs.update({_id: {$in: cluster.igfss}}, {$addToSet: {clusters: clusterId}}, {multi: true}).exec())
-            .then(() => mongo.Igfs.update({_id: {$nin: cluster.igfss}}, {$pull: {clusters: clusterId}}, {multi: true}).exec())
+        return mongo.Cluster.updateOne({_id: clusterId}, cluster, {upsert: true}).exec()
+            .then(() => mongo.Cache.updateMany({_id: {$in: cluster.caches}}, {$addToSet: {clusters: clusterId}}).exec())
+            .then(() => mongo.Cache.updateMany({_id: {$nin: cluster.caches}}, {$pull: {clusters: clusterId}}).exec())
+            .then(() => mongo.Igfs.updateMany({_id: {$in: cluster.igfss}}, {$addToSet: {clusters: clusterId}}).exec())
+            .then(() => mongo.Igfs.updateMany({_id: {$nin: cluster.igfss}}, {$pull: {clusters: clusterId}}).exec())
             .then(() => cluster)
             .catch((err) => {
                 if (err.code === mongo.errCodes.DUPLICATE_KEY_UPDATE_ERROR || err.code === mongo.errCodes.DUPLICATE_KEY_ERROR)
@@ -81,8 +81,8 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
                     throw err;
             })
             .then((savedCluster) =>
-                mongo.Cache.update({_id: {$in: savedCluster.caches}}, {$addToSet: {clusters: savedCluster._id}}, {multi: true}).exec()
-                    .then(() => mongo.Igfs.update({_id: {$in: savedCluster.igfss}}, {$addToSet: {clusters: savedCluster._id}}, {multi: true}).exec())
+                mongo.Cache.updateMany({_id: {$in: savedCluster.caches}}, {$addToSet: {clusters: savedCluster._id}}).exec()
+                    .then(() => mongo.Igfs.updateMany({_id: {$in: savedCluster.igfss}}, {$addToSet: {clusters: savedCluster._id}}).exec())
                     .then(() => savedCluster)
             );
     };
@@ -94,9 +94,12 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
      * @returns {Promise.<RemoveResult>} - that resolves results of remove operation.
      */
     const removeAllBySpaces = (spaceIds) => {
-        return mongo.Cache.update({space: {$in: spaceIds}}, {clusters: []}, {multi: true}).exec()
-            .then(() => mongo.Igfs.update({space: {$in: spaceIds}}, {clusters: []}, {multi: true}).exec())
-            .then(() => mongo.Cluster.remove({space: {$in: spaceIds}}).exec());
+        return Promise.all([
+            mongo.DomainModel.deleteMany({space: {$in: spaceIds}}).exec(),
+            mongo.Cache.deleteMany({space: {$in: spaceIds}}).exec(),
+            mongo.Igfs.deleteMany({space: {$in: spaceIds}}).exec()
+        ])
+            .then(() => mongo.Cluster.deleteMany({space: {$in: spaceIds}}).exec());
     };
 
     class ClustersService {
@@ -168,7 +171,7 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
 
                             cluster.caches = _.map(caches, '_id');
 
-                            return mongo.Cluster.update(query, {$set: cluster, new: true}, {upsert: true}).exec();
+                            return mongo.Cluster.updateOne(query, {$set: cluster, new: true}, {upsert: true}).exec();
                         });
                 })
                 .then(() => _.map(caches, cachesService.upsertBasic))
@@ -245,14 +248,18 @@ module.exports.factory = (mongo, spacesService, cachesService, modelsService, ig
             return Promise.all(_.map(ids, (id) => {
                 return mongo.Cluster.findByIdAndRemove(id).exec()
                     .then((cluster) => {
+                        if (_.isNil(cluster))
+                            return 0;
+
                         return Promise.all([
-                            mongo.DomainModel.remove({_id: {$in: cluster.models}}).exec(),
-                            mongo.Cache.remove({_id: {$in: cluster.caches}}).exec(),
-                            mongo.Igfs.remove({_id: {$in: cluster.igfss}}).exec()
-                        ]);
+                            mongo.DomainModel.deleteMany({_id: {$in: cluster.models}}).exec(),
+                            mongo.Cache.deleteMany({_id: {$in: cluster.caches}}).exec(),
+                            mongo.Igfs.deleteMany({_id: {$in: cluster.igfss}}).exec()
+                        ])
+                            .then(() => 1);
                     });
             }))
-                .then(() => ({rowsAffected: ids.length}));
+                .then((res) => ({rowsAffected: _.sum(res)}));
         }
 
         /**

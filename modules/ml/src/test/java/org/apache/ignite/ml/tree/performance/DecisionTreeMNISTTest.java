@@ -17,32 +17,20 @@
 
 package org.apache.ignite.ml.tree.performance;
 
-import org.apache.ignite.ml.nn.performance.MnistMLPTestUtil;
 import org.apache.ignite.ml.tree.DecisionTreeClassificationTrainer;
-import org.apache.ignite.ml.tree.DecisionTreeNode;
-import org.apache.ignite.ml.tree.impurity.util.SimpleStepFunctionCompressor;
-import org.apache.ignite.ml.util.MnistUtils;
-import org.junit.Test;
-
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-
-import static junit.framework.TestCase.assertTrue;
 
 /**
  * Tests {@link DecisionTreeClassificationTrainer} on the MNIST dataset using locally stored data. For manual run.
  */
 public class DecisionTreeMNISTTest {
     /** Tests on the MNIST dataset. For manual run. */
-    @Test
+/*    @Test
     public void testMNIST() throws IOException {
         Map<Integer, MnistUtils.MnistLabeledImage> trainingSet = new HashMap<>();
 
         int i = 0;
         for (MnistUtils.MnistLabeledImage e : MnistMLPTestUtil.loadTrainingSet(60_000))
             trainingSet.put(i++, e);
-
 
         DecisionTreeClassificationTrainer trainer = new DecisionTreeClassificationTrainer(
             8,
@@ -51,16 +39,17 @@ public class DecisionTreeMNISTTest {
 
         DecisionTreeNode mdl = trainer.fit(
             trainingSet,
-            10,
-            (k, v) -> v.getPixels(),
-            (k, v) -> (double) v.getLabel()
+            10, FeatureLabelExtractorWrapper.wrap(
+                (k, v) -> VectorUtils.of(v.getPixels()),
+                (k, v) -> (double)v.getLabel()
+            )
         );
 
         int correctAnswers = 0;
         int incorrectAnswers = 0;
 
         for (MnistUtils.MnistLabeledImage e : MnistMLPTestUtil.loadTestSet(10_000)) {
-            double res = mdl.apply(e.getPixels());
+            double res = mdl.predict(new DenseVector(e.getPixels()));
 
             if (res == e.getLabel())
                 correctAnswers++;
@@ -71,5 +60,5 @@ public class DecisionTreeMNISTTest {
         double accuracy = 1.0 * correctAnswers / (correctAnswers + incorrectAnswers);
 
         assertTrue(accuracy > 0.8);
-    }
+    }*/
 }

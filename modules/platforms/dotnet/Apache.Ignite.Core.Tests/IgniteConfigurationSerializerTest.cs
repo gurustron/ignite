@@ -47,6 +47,7 @@ namespace Apache.Ignite.Core.Tests
     using Apache.Ignite.Core.Discovery.Tcp;
     using Apache.Ignite.Core.Discovery.Tcp.Multicast;
     using Apache.Ignite.Core.Events;
+    using Apache.Ignite.Core.Failure;
     using Apache.Ignite.Core.Lifecycle;
     using Apache.Ignite.Core.Log;
     using Apache.Ignite.Core.PersistentStore;
@@ -98,6 +99,16 @@ namespace Apache.Ignite.Core.Tests
             Assert.AreEqual(new TimeSpan(1, 2, 3), cfg.LongQueryWarningTimeout);
             Assert.IsFalse(cfg.IsActiveOnStart);
             Assert.IsTrue(cfg.AuthenticationEnabled);
+
+            Assert.AreEqual(10000, cfg.MvccVacuumFrequency);
+            Assert.AreEqual(4, cfg.MvccVacuumThreadCount);
+            Assert.AreEqual(123, cfg.SqlQueryHistorySize);
+
+            Assert.IsNotNull(cfg.SqlSchemas);
+            Assert.AreEqual(2, cfg.SqlSchemas.Count);
+            Assert.IsTrue(cfg.SqlSchemas.Contains("SCHEMA_1"));
+            Assert.IsTrue(cfg.SqlSchemas.Contains("schema_2"));
+
             Assert.AreEqual("someId012", cfg.ConsistentId);
             Assert.IsFalse(cfg.RedirectJavaConsoleOutput);
 
@@ -254,6 +265,7 @@ namespace Apache.Ignite.Core.Tests
             Assert.AreEqual(14, client.MaxOpenCursorsPerConnection);
             Assert.AreEqual(15, client.ThreadPoolSize);
             Assert.AreEqual(19, client.IdleTimeout.TotalSeconds);
+            Assert.AreEqual(20, client.ThinClientConfiguration.MaxActiveTxPerConnection);
 
             var pers = cfg.PersistentStoreConfiguration;
 
@@ -313,6 +325,7 @@ namespace Apache.Ignite.Core.Tests
             Assert.AreEqual("wal-store", ds.WalPath);
             Assert.AreEqual(TimeSpan.FromSeconds(18), ds.WalAutoArchiveAfterInactivity);
             Assert.IsTrue(ds.WriteThrottlingEnabled);
+            Assert.AreEqual(DiskPageCompression.Zstd, ds.WalPageCompression);
 
             var dr = ds.DataRegionConfigurations.Single();
             Assert.AreEqual(1, dr.EmptyPagesPoolSize);
@@ -340,6 +353,19 @@ namespace Apache.Ignite.Core.Tests
             Assert.IsFalse(dr.MetricsEnabled);
 
             Assert.IsInstanceOf<SslContextFactory>(cfg.SslContextFactory);
+            
+            Assert.IsInstanceOf<StopNodeOrHaltFailureHandler>(cfg.FailureHandler);
+
+            var failureHandler = (StopNodeOrHaltFailureHandler)cfg.FailureHandler;
+            
+            Assert.IsTrue(failureHandler.TryStop);  
+            Assert.AreEqual(TimeSpan.Parse("0:1:0"), failureHandler.Timeout);
+
+            var ec = cfg.ExecutorConfiguration;
+            Assert.NotNull(ec);
+            Assert.AreEqual(2, ec.Count);
+            Assert.AreEqual(new[] {"exec1", "exec2"}, ec.Select(e => e.Name));
+            Assert.AreEqual(new[] {1, 2}, ec.Select(e => e.Size));
         }
 
         /// <summary>
@@ -906,7 +932,10 @@ namespace Apache.Ignite.Core.Tests
                     OdbcEnabled = false,
                     JdbcEnabled = false,
                     ThreadPoolSize = 7,
-                    IdleTimeout = TimeSpan.FromMinutes(5)
+                    IdleTimeout = TimeSpan.FromMinutes(5),
+                    ThinClientConfiguration = new ThinClientConfiguration {
+                        MaxActiveTxPerConnection = 8
+                    }
                 },
                 PersistentStoreConfiguration = new PersistentStoreConfiguration
                 {
@@ -969,6 +998,8 @@ namespace Apache.Ignite.Core.Tests
                     ConcurrencyLevel = 1,
                     PageSize = 5 * 1024,
                     WalAutoArchiveAfterInactivity = TimeSpan.FromSeconds(19),
+                    WalPageCompression = DiskPageCompression.Lz4,
+                    WalPageCompressionLevel = 10,
                     DefaultDataRegionConfiguration = new DataRegionConfiguration
                     {
                         Name = "reg1",
@@ -1002,7 +1033,21 @@ namespace Apache.Ignite.Core.Tests
                         }
                     }
                 },
-                SslContextFactory = new SslContextFactory()
+                SslContextFactory = new SslContextFactory(),
+                FailureHandler = new StopNodeOrHaltFailureHandler
+                {
+                    TryStop = false,
+                    Timeout = TimeSpan.FromSeconds(10)
+                },
+                SqlQueryHistorySize = 345,
+                ExecutorConfiguration = new[]
+                {
+                    new ExecutorConfiguration
+                    {
+                        Name = "exec-1",
+                        Size = 11
+                    }
+                }
             };
         }
 

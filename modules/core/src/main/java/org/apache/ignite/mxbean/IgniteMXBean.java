@@ -433,6 +433,20 @@ public interface IgniteMXBean {
     public void dumpDebugInfo();
 
     /**
+     * Gets a formatted properties of current coordinator.
+     */
+    @MXBeanDescription("Formatted properties of current coordinator.")
+    public String getCurrentCoordinatorFormatted();
+
+    /**
+     * Gets a flag whether local node is in baseline. Returns false if baseline topology is not established.
+     *
+     * @return Return a baseline flag.
+     */
+    @MXBeanDescription("Baseline node flag.")
+    public boolean isNodeInBaseline();
+
+    /**
      * Runs IO latency test against all remote server nodes in cluster.
      *
      * @param warmup Warmup duration in milliseconds.
@@ -475,4 +489,48 @@ public interface IgniteMXBean {
         int payLoadSize,
         boolean procFromNioThread
     );
+
+    /**
+     * Clears node local map.
+     */
+    @MXBeanDescription("Clears local node map.")
+    void clearNodeLocalMap();
+
+    /**
+     * Resets metrics for of a given registry.
+     *
+     * @param registry Metrics registry name.
+     */
+    @MXBeanDescription("Resets metrics of a given registry.")
+    @MXBeanParametersNames("registry")
+    @MXBeanParametersDescriptions("Metrics registry.")
+    public void resetMetrics(String registry);
+
+    /**
+     * Gets cluster read-only mode status.
+     *
+     * @return {@code true} if cluster active and read-only mode enabled, and {@code false} otherwise.
+     */
+    @MXBeanDescription("Cluster read-only mode status.")
+    boolean readOnlyMode();
+
+    /**
+     * Enable or disable cluster read-only mode. If {@code readOnly} flag is {@code true} read-only mode will be
+     * enabled. If {@code readOnly} flag is {@code false} read-only mode will be disabled.
+     *
+     * @param readOnly enable/disable cluster read-only mode flag.
+     */
+    @MXBeanDescription("Enable or disable cluster read-only mode.")
+    @MXBeanParametersNames("readOnly")
+    @MXBeanParametersDescriptions("True - enable read-only mode, false - disable read-only mode.")
+    void readOnlyMode(boolean readOnly);
+
+    /**
+     * Gets duration of read-only mode enabled on cluster.
+     *
+     * @return {@code 0} if cluster read-only mode disabled, and time in milliseconds since enabling cluster read-only
+     * mode.
+     */
+    @MXBeanDescription("Duration of read-only mode enabled on cluster.")
+    long getReadOnlyModeDuration();
 }

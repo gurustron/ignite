@@ -33,7 +33,7 @@ public class IgniteStableBaselineBinObjFieldsQuerySelfTest extends IgniteBinaryO
             new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(
                     new DataRegionConfiguration()
-                        .setMaxSize(200 * 1024 * 1024)
+                        .setMaxSize(200L * 1024 * 1024)
                         .setPersistenceEnabled(true)
                 )
         );
@@ -70,8 +70,8 @@ public class IgniteStableBaselineBinObjFieldsQuerySelfTest extends IgniteBinaryO
 
     /** {@inheritDoc} */
     @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
         cleanPersistenceDir();
+
+        super.afterTestsStopped();
     }
 }

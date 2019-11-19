@@ -16,7 +16,12 @@
  */
 import _ from 'lodash';
 
-export default ['IgniteFormUtils', ['$window', 'IgniteFocus', ($window, Focus) => {
+/**
+ * @param {ng.IWindowService} $window
+ * @param {ReturnType<typeof import('./Focus.service').default>} Focus
+ * @param {ng.IRootScopeService} $rootScope
+ */
+export default function service($window, Focus, $rootScope) {
     function ensureActivePanel(ui, pnl, focusId) {
         if (ui && ui.loadPanel) {
             const collapses = $('[bs-collapse-target]');
@@ -55,12 +60,13 @@ export default ['IgniteFormUtils', ['$window', 'IgniteFocus', ($window, Focus) =
         }
     }
 
+    /** @type {CanvasRenderingContext2D} */
     let context = null;
 
     /**
      * Calculate width of specified text in body's font.
      *
-     * @param text Text to calculate width.
+     * @param {string} text Text to calculate width.
      * @returns {Number} Width of text in pixels.
      */
     function measureText(text) {
@@ -326,19 +332,26 @@ export default ['IgniteFormUtils', ['$window', 'IgniteFocus', ($window, Focus) =
     }
 
     // TODO: move somewhere else
-    function triggerValidation(form, $scope) {
+    function triggerValidation(form) {
         const fe = (m) => Object.keys(m.$error)[0];
         const em = (e) => (m) => {
-            if (!e) return;
+            if (!e)
+                return;
+
             const walk = (m) => {
-                if (!m.$error[e]) return;
-                if (m.$error[e] === true) return m;
+                if (!m || !m.$error[e])
+                    return;
+
+                if (m.$error[e] === true)
+                    return m;
+
                 return walk(m.$error[e][0]);
             };
+
             return walk(m);
         };
 
-        $scope.$broadcast('$showValidationError', em(fe(form))(form));
+        $rootScope.$broadcast('$showValidationError', em(fe(form))(form));
     }
 
     return {
@@ -420,14 +433,6 @@ export default ['IgniteFormUtils', ['$window', 'IgniteFocus', ($window, Focus) =
         ensureActivePanel(panels, id, focusId) {
             ensureActivePanel(panels, id, focusId);
         },
-        confirmUnsavedChanges(dirty, selectFunc) {
-            if (dirty) {
-                if ($window.confirm('You have unsaved changes.\n\nAre you sure you want to discard them?'))
-                    selectFunc();
-            }
-            else
-                selectFunc();
-        },
         saveBtnTipText(dirty, objectName) {
             if (dirty)
                 return 'Save ' + objectName;
@@ -454,4 +459,6 @@ export default ['IgniteFormUtils', ['$window', 'IgniteFocus', ($window, Focus) =
         },
         triggerValidation
     };
-}]];
+}
+
+service.$inject = ['$window', 'IgniteFocus', '$rootScope'];

@@ -17,11 +17,13 @@
 package org.apache.ignite.internal.processors.cache.persistence;
 
 import org.apache.ignite.DataStorageMetrics;
+import org.apache.ignite.internal.processors.metric.GridMetricManager;
 import org.apache.ignite.internal.util.typedef.internal.S;
 
 /**
- *
+ * @deprecated Use {@link GridMetricManager} instead.
  */
+@Deprecated
 public class DataStorageMetricsSnapshot implements DataStorageMetrics {
     /** */
     private float walLoggingRate;
@@ -69,7 +71,16 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
     private long walLastRollOverTime;
 
     /** */
-    private long checkpointTotalSize;
+    private long checkpointTotalTime;
+
+    /** */
+    private long usedCheckpointBufferSize;
+
+    /** */
+    private long usedCheckpointBufferPages;
+
+    /** */
+    private long checkpointBufferSize;
 
     /** */
     private long dirtyPages;
@@ -92,6 +103,12 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
     /** */
     private long totalAllocatedSize;
 
+    /** */
+    private long storageSize;
+
+    /** */
+    private long sparseStorageSize;
+
     /**
      * @param metrics Metrics.
      */
@@ -111,7 +128,10 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
         lastCpCowPages = metrics.getLastCheckpointCopiedOnWritePagesNumber();
         walTotalSize = metrics.getWalTotalSize();
         walLastRollOverTime = metrics.getWalLastRollOverTime();
-        checkpointTotalSize = metrics.getCheckpointTotalTime();
+        checkpointTotalTime = metrics.getCheckpointTotalTime();
+        usedCheckpointBufferSize = metrics.getUsedCheckpointBufferSize();
+        usedCheckpointBufferPages = metrics.getUsedCheckpointBufferPages();
+        checkpointBufferSize = metrics.getCheckpointBufferSize();
         dirtyPages = metrics.getDirtyPages();
         readPages = metrics.getPagesRead();
         writtenPages = metrics.getPagesWritten();
@@ -119,6 +139,8 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
         offHeapSize = metrics.getOffHeapSize();
         offHeadUsedSize = metrics.getOffheapUsedSize();
         totalAllocatedSize = metrics.getTotalAllocatedSize();
+        storageSize = metrics.getStorageSize();
+        sparseStorageSize = metrics.getSparseStorageSize();
     }
 
     /** {@inheritDoc} */
@@ -198,7 +220,7 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
 
     /** {@inheritDoc} */
     @Override public long getCheckpointTotalTime() {
-        return checkpointTotalSize;
+        return checkpointTotalTime;
     }
 
     /** {@inheritDoc} */
@@ -234,6 +256,31 @@ public class DataStorageMetricsSnapshot implements DataStorageMetrics {
     /** {@inheritDoc} */
     @Override public long getTotalAllocatedSize() {
         return totalAllocatedSize;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getUsedCheckpointBufferPages() {
+        return usedCheckpointBufferPages;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getUsedCheckpointBufferSize() {
+        return usedCheckpointBufferSize;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getCheckpointBufferSize(){
+        return checkpointBufferSize;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getStorageSize() {
+        return storageSize;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getSparseStorageSize() {
+        return sparseStorageSize;
     }
 
     /** {@inheritDoc} */

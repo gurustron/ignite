@@ -51,6 +51,7 @@ import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.resources.JobContextResource;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -81,7 +82,7 @@ public class VisorGatewayTask implements ComputeTask<Object[], Object> {
     protected transient IgniteEx ignite;
 
     /** {@inheritDoc} */
-    @Nullable @Override public Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
+    @NotNull @Override public Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
         @Nullable Object[] args) throws IgniteException {
         assert args != null;
         assert args.length >= 2;
@@ -185,8 +186,9 @@ public class VisorGatewayTask implements ComputeTask<Object[], Object> {
 
                 Class<?> valCls = Class.forName(valClsName);
 
-                return new IgniteBiTuple<>(toObject(keyCls, (String)argument(startIdx + 2)),
-                    toObject(valCls, (String)argument(startIdx + 3)));
+                return new IgniteBiTuple<>(
+                    toObject(keyCls, argument(startIdx + 2)),
+                    toObject(valCls, argument(startIdx + 3)));
             }
 
             if (cls == Map.class) {
@@ -229,8 +231,10 @@ public class VisorGatewayTask implements ComputeTask<Object[], Object> {
                 Class<?> v2Cls = Class.forName(v2ClsName);
                 Class<?> v3Cls = Class.forName(v3ClsName);
 
-                return new GridTuple3<>(toObject(v1Cls, (String)argument(startIdx + 3)), toObject(v2Cls,
-                    (String)argument(startIdx + 4)), toObject(v3Cls, (String)argument(startIdx + 5)));
+                return new GridTuple3<>(
+                    toObject(v1Cls, argument(startIdx + 3)),
+                    toObject(v2Cls, argument(startIdx + 4)),
+                    toObject(v3Cls, argument(startIdx + 5)));
             }
 
             return toObject(cls, arg);
@@ -243,7 +247,7 @@ public class VisorGatewayTask implements ComputeTask<Object[], Object> {
          * @return Object constructed from string.
          */
         @Nullable private Object toObject(Class cls, String val) {
-            if (val == null  || "null".equals(val))
+            if (val == null  || "null".equals(val) || "nil".equals(val))
                 return null;
 
             if (String.class == cls)
@@ -390,6 +394,7 @@ public class VisorGatewayTask implements ComputeTask<Object[], Object> {
                                     }
                                 }
 
+                                ctor.setAccessible(true);
                                 jobArgs = ctor.newInstance(initArgs);
 
                                 break;

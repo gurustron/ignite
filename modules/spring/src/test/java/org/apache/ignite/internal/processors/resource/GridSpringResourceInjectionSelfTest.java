@@ -27,6 +27,7 @@ import org.apache.ignite.lang.IgniteCallable;
 import org.apache.ignite.resources.SpringResource;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
@@ -48,14 +49,10 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
             "/org/apache/ignite/internal/processors/resource/spring-resource.xml"));
     }
 
-    /** {@inheritDoc} */
-    @Override public void afterTestsStopped() throws Exception {
-        stopAllGrids();
-    }
-
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClosureFieldByResourceName() throws Exception {
         grid.compute().call(new IgniteCallable<Object>() {
             @SpringResource(resourceName = DUMMY_BEAN)
@@ -72,6 +69,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClosureFieldByResourceClass() throws Exception {
         grid.compute().call(new IgniteCallable<Object>() {
             @SpringResource(resourceClass = DummyResourceBean.class)
@@ -88,6 +86,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClosureFieldByResourceClassWithMultipleBeans() throws Exception {
         IgniteConfiguration anotherCfg = new IgniteConfiguration();
         anotherCfg.setIgniteInstanceName("anotherGrid");
@@ -114,6 +113,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with non-existing resource name.
      */
+    @Test
     public void testClosureFieldWithWrongResourceName() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource(resourceName = "nonExistentResource")
@@ -130,6 +130,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with non-existing resource class.
      */
+    @Test
     public void testClosureFieldWithWrongResourceClass() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource(resourceClass = AnotherDummyResourceBean.class)
@@ -147,6 +148,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with both resource and class set (ambiguity).
      */
+    @Test
     public void testClosureFieldByResourceClassAndName() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource(resourceClass = DummyResourceBean.class, resourceName = DUMMY_BEAN)
@@ -163,6 +165,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with no name and class set.
      */
+    @Test
     public void testClosureFieldWithNoParams() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource
@@ -179,6 +182,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClosureMethodWithResourceName() throws Exception {
         grid.compute().call(new IgniteCallable<Object>() {
             private DummyResourceBean dummyRsrcBean;
@@ -201,6 +205,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClosureMethodWithResourceClass() throws Exception {
         grid.compute().call(new IgniteCallable<Object>() {
             private DummyResourceBean dummyRsrcBean;
@@ -223,7 +228,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * @throws Exception If failed.
      */
-    @SuppressWarnings("ThrowableResultOfMethodCallIgnored")
+    @Test
     public void testClosureMethodWithResourceClassWithMultipleBeans() throws Exception {
         IgniteConfiguration anotherCfg = new IgniteConfiguration();
         anotherCfg.setIgniteInstanceName("anotherGrid");
@@ -259,6 +264,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with non-existing resource name.
      */
+    @Test
     public void testClosureMethodWithWrongResourceName() {
         assertError(new IgniteCallable<Object>() {
             private DummyResourceBean dummyRsrcBean;
@@ -279,6 +285,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with non-existing resource class.
      */
+    @Test
     public void testClosureMethodWithWrongResourceClass() {
         assertError(new IgniteCallable<Object>() {
             private AnotherDummyResourceBean dummyRsrcBean;
@@ -300,6 +307,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with both resource and class set (ambiguity).
      */
+    @Test
     public void testClosureMethodByResourceClassAndName() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource(resourceClass = DummyResourceBean.class, resourceName = DUMMY_BEAN)
@@ -316,6 +324,7 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
     /**
      * Resource injection with no params.
      */
+    @Test
     public void testClosureMethodWithNoParams() {
         assertError(new IgniteCallable<Object>() {
             @SpringResource
@@ -335,7 +344,6 @@ public class GridSpringResourceInjectionSelfTest extends GridCommonAbstractTest 
      * @param expE Expected exception type.
      * @param expEMsg Expected exception message.
      */
-    @SuppressWarnings("ThrowableResultOfMethodCallIgnored")
     private void assertError(final IgniteCallable<?> job, final Ignite grid, Class<? extends Throwable> expE,
         String expEMsg) {
         GridTestUtils.assertThrowsAnyCause(log, new Callable<Object>() {

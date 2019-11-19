@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.io.Serializable;
 import java.util.Map;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
@@ -55,7 +57,8 @@ public class CacheJoinNodeDiscoveryData implements Serializable {
         IgniteUuid cacheDeploymentId,
         Map<String, CacheJoinNodeDiscoveryData.CacheInfo> caches,
         Map<String, CacheJoinNodeDiscoveryData.CacheInfo> templates,
-        boolean startCaches) {
+        boolean startCaches
+    ) {
         this.cacheDeploymentId = cacheDeploymentId;
         this.caches = caches;
         this.templates = templates;
@@ -99,21 +102,21 @@ public class CacheJoinNodeDiscoveryData implements Serializable {
 
         /** */
         @GridToStringInclude
-        private final StoredCacheData cacheData;
+        private StoredCacheData cacheData;
 
         /** */
         @GridToStringInclude
-        private final CacheType cacheType;
+        private CacheType cacheType;
 
         /** */
         @GridToStringInclude
-        private final boolean sql;
+        private boolean sql;
 
         /** Flags added for future usage. */
-        private final long flags;
+        private long flags;
 
         /** Statically configured flag */
-        private final boolean staticallyConfigured;
+        private boolean staticallyConfigured;
 
         /**
          * @param cacheData Cache data.
@@ -157,6 +160,27 @@ public class CacheJoinNodeDiscoveryData implements Serializable {
          */
         public boolean isStaticallyConfigured() {
             return staticallyConfigured;
+        }
+
+        /**
+         * @return Long which bits represent some flags.
+         */
+        public long getFlags() {
+            return flags;
+        }
+
+        /**
+         * @param ois ObjectInputStream.
+         */
+        private void readObject(ObjectInputStream ois)
+            throws IOException, ClassNotFoundException {
+            ObjectInputStream.GetField gf = ois.readFields();
+
+            cacheData = (StoredCacheData)gf.get("cacheData", null);
+            cacheType = (CacheType)gf.get("cacheType", null);
+            sql = gf.get("sql", false);
+            flags = gf.get("flags", 0L);
+            staticallyConfigured = gf.get("staticallyConfigured", true);
         }
 
         /** {@inheritDoc} */

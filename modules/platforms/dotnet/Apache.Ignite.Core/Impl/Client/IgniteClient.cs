@@ -21,6 +21,7 @@ namespace Apache.Ignite.Core.Impl.Client
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Diagnostics.CodeAnalysis;
+    using System.Net;
     using Apache.Ignite.Core.Binary;
     using Apache.Ignite.Core.Client;
     using Apache.Ignite.Core.Client.Cache;
@@ -28,6 +29,7 @@ namespace Apache.Ignite.Core.Impl.Client
     using Apache.Ignite.Core.Impl.Binary;
     using Apache.Ignite.Core.Impl.Binary.IO;
     using Apache.Ignite.Core.Impl.Client.Cache;
+    using Apache.Ignite.Core.Impl.Client.Cluster;
     using Apache.Ignite.Core.Impl.Cluster;
     using Apache.Ignite.Core.Impl.Common;
     using Apache.Ignite.Core.Impl.Handle;
@@ -39,7 +41,7 @@ namespace Apache.Ignite.Core.Impl.Client
     internal class IgniteClient : IIgniteInternal, IIgniteClient
     {
         /** Socket. */
-        private readonly ClientSocket _socket;
+        private readonly ClientFailoverSocket _socket;
 
         /** Marshaller. */
         private readonly Marshaller _marsh;
@@ -63,12 +65,12 @@ namespace Apache.Ignite.Core.Impl.Client
 
             _configuration = new IgniteClientConfiguration(clientConfiguration);
 
-            _socket = new ClientSocket(_configuration);
-
             _marsh = new Marshaller(_configuration.BinaryConfiguration)
             {
                 Ignite = this
             };
+
+            _socket = new ClientFailoverSocket(_configuration, _marsh);
 
             _binProc = _configuration.BinaryProcessor ?? new BinaryProcessorClient(_socket);
 
@@ -78,7 +80,7 @@ namespace Apache.Ignite.Core.Impl.Client
         /// <summary>
         /// Gets the socket.
         /// </summary>
-        public ClientSocket Socket
+        public ClientFailoverSocket Socket
         {
             get { return _socket; }
         }
@@ -115,7 +117,7 @@ namespace Apache.Ignite.Core.Impl.Client
             IgniteArgumentCheck.NotNull(configuration, "configuration");
 
             DoOutOp(ClientOp.CacheGetOrCreateWithConfiguration,
-                w => ClientCacheConfigurationSerializer.Write(w.Stream, configuration));
+                w => ClientCacheConfigurationSerializer.Write(w.Stream, configuration, ServerVersion));
 
             return GetCache<TK, TV>(configuration.Name);
         }
@@ -136,7 +138,7 @@ namespace Apache.Ignite.Core.Impl.Client
             IgniteArgumentCheck.NotNull(configuration, "configuration");
 
             DoOutOp(ClientOp.CacheCreateWithConfiguration,
-                w => ClientCacheConfigurationSerializer.Write(w.Stream, configuration));
+                w => ClientCacheConfigurationSerializer.Write(w.Stream, configuration, ServerVersion));
 
             return GetCache<TK, TV>(configuration.Name);
         }
@@ -145,6 +147,12 @@ namespace Apache.Ignite.Core.Impl.Client
         public ICollection<string> GetCacheNames()
         {
             return DoOutInOp(ClientOp.CacheGetNames, null, s => Marshaller.StartUnmarshal(s).ReadStringCollection());
+        }
+
+        /** <inheritDoc /> */
+        public IClientCluster GetCluster()
+        {
+            return new ClientCluster(this, _marsh);
         }
 
         /** <inheritDoc /> */
@@ -172,6 +180,18 @@ namespace Apache.Ignite.Core.Impl.Client
         {
             // Return a copy to allow modifications by the user.
             return new IgniteClientConfiguration(_configuration);
+        }
+
+        /** <inheritDoc /> */
+        public EndPoint RemoteEndPoint
+        {
+            get { return _socket.RemoteEndPoint; }
+        }
+
+        /** <inheritDoc /> */
+        public EndPoint LocalEndPoint
+        {
+            get { return _socket.LocalEndPoint; }
         }
 
         /** <inheritDoc /> */
@@ -214,6 +234,14 @@ namespace Apache.Ignite.Core.Impl.Client
         public IDataStreamer<TK, TV> GetDataStreamer<TK, TV>(string cacheName, bool keepBinary)
         {
             throw GetClientNotSupportedException();
+        }
+
+        /// <summary>
+        /// Gets the protocol version supported by server.
+        /// </summary>
+        public ClientProtocolVersion ServerVersion
+        {
+            get { return _socket.ServerVersion; }
         }
 
         /// <summary>

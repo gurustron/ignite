@@ -20,11 +20,15 @@ package org.apache.ignite.internal.processors.cache;
 import java.util.Collections;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.internal.processors.metric.GridMetricManager;
 import org.apache.ignite.mxbean.CacheMetricsMXBean;
 
 /**
  * Management bean that provides access to {@link IgniteCache IgniteCache}.
+ *
+ * @deprecated Use {@link GridMetricManager} instead.
  */
+@Deprecated
 class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     /** Cache. */
     private GridCacheAdapter<?, ?> cache;
@@ -286,6 +290,61 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     }
 
     /** {@inheritDoc} */
+    @Override public long getEntryProcessorPuts() {
+        return cache.metrics0().getEntryProcessorPuts();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorRemovals() {
+        return cache.metrics0().getEntryProcessorRemovals();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorReadOnlyInvocations() {
+        return cache.metrics0().getEntryProcessorReadOnlyInvocations();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorInvocations() {
+        return cache.metrics0().getEntryProcessorInvocations();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorHits() {
+        return cache.metrics0().getEntryProcessorHits();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorHitPercentage() {
+        return cache.metrics0().getEntryProcessorHitPercentage();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMissPercentage() {
+        return cache.metrics0().getEntryProcessorMissPercentage();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getEntryProcessorMisses() {
+        return cache.metrics0().getEntryProcessorMisses();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorAverageInvocationTime() {
+        return cache.metrics0().getEntryProcessorAverageInvocationTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMinInvocationTime() {
+        return cache.metrics0().getEntryProcessorMinInvocationTime();
+    }
+
+    /** {@inheritDoc} */
+    @Override public float getEntryProcessorMaxInvocationTime() {
+        return cache.metrics0().getEntryProcessorMaxInvocationTime();
+    }
+
+    /** {@inheritDoc} */
     @Override public long getCacheRemovals() {
         return cache.metrics0().getCacheRemovals();
     }
@@ -368,6 +427,14 @@ class CacheLocalMetricsMXBeanImpl implements CacheMetricsMXBean {
     /** {@inheritDoc} */
     @Override public int getTotalPartitionsCount() {
         return cache.metrics0().getTotalPartitionsCount();
+    }
+
+    @Override public long getRebalancedKeys() {
+        return cache.metrics0().getRebalancedKeys();
+    }
+
+    @Override public long getEstimatedRebalancingKeys() {
+        return cache.metrics0().getEstimatedRebalancingKeys();
     }
 
     /** {@inheritDoc} */

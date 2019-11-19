@@ -66,6 +66,7 @@ import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.internal.util.worker.GridWorker;
+import org.apache.ignite.internal.util.worker.GridWorkerListener;
 import org.apache.ignite.lang.IgniteBiInClosure;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
@@ -121,6 +122,9 @@ public class GridNioServer<T> {
     /** Selection key meta key. */
     private static final int WORKER_IDX_META_KEY = GridNioSessionMetaKey.nextUniqueKey();
 
+    /** Meta key for pending requests to be written. */
+    private static final int REQUESTS_META_KEY = GridNioSessionMetaKey.nextUniqueKey();
+
     /** */
     private static final boolean DISABLE_KEYSET_OPTIMIZATION =
         IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_NO_SELECTOR_OPTS);
@@ -142,9 +146,9 @@ public class GridNioServer<T> {
     /** Defines how many times selector should do {@code selectNow()} before doing {@code select(long)}. */
     private long selectorSpins;
 
-    /** Accept worker thread. */
+    /** Accept worker. */
     @GridToStringExclude
-    private final IgniteThread acceptThread;
+    private final GridNioAcceptWorker acceptWorker;
 
     /** Read worker threads. */
     private final IgniteThread[] clientThreads;
@@ -192,11 +196,9 @@ public class GridNioServer<T> {
     private volatile long idleTimeout = ConnectorConfiguration.DFLT_IDLE_TIMEOUT;
 
     /** For test purposes only. */
-    @SuppressWarnings("UnusedDeclaration")
     private boolean skipWrite;
 
     /** For test purposes only. */
-    @SuppressWarnings("UnusedDeclaration")
     private boolean skipRead;
 
     /** Local address. */
@@ -240,7 +242,10 @@ public class GridNioServer<T> {
     /** */
     private final IgniteRunnable balancer;
 
-    /** */
+    /**
+     * Interval in milliseconds between consequtive {@link GridWorkerListener#onIdle(GridWorker)} calls
+     * in server workers.
+     */
     private final boolean readWriteSelectorsAssign;
 
     /**
@@ -267,6 +272,7 @@ public class GridNioServer<T> {
      * @param skipRecoveryPred Skip recovery predicate.
      * @param msgQueueLsnr Message queue size listener.
      * @param readWriteSelectorsAssign If {@code true} then in/out connections are assigned to even/odd workers.
+     * @param workerLsnr Worker lifecycle listener.
      * @param filters Filters for this server.
      * @throws IgniteCheckedException If failed.
      */
@@ -292,6 +298,7 @@ public class GridNioServer<T> {
         IgnitePredicate<Message> skipRecoveryPred,
         IgniteBiInClosure<GridNioSession, Integer> msgQueueLsnr,
         boolean readWriteSelectorsAssign,
+        @Nullable GridWorkerListener workerLsnr,
         GridNioFilter... filters
     ) throws IgniteCheckedException {
         if (port != -1)
@@ -338,11 +345,18 @@ public class GridNioServer<T> {
             // This method will throw exception if address already in use.
             Selector acceptSelector = createSelector(locAddr);
 
-            acceptThread = new IgniteThread(new GridNioAcceptWorker(igniteInstanceName, "nio-acceptor", log, acceptSelector));
+            String threadName;
+
+            if (srvName == null)
+                threadName = "nio-acceptor";
+            else
+                threadName = "nio-acceptor-" + srvName;
+
+            acceptWorker = new GridNioAcceptWorker(igniteInstanceName, threadName, log, acceptSelector, workerLsnr);
         }
         else {
             locAddr = null;
-            acceptThread = null;
+            acceptWorker = null;
         }
 
         clientWorkers = new ArrayList<>(selectorCnt);
@@ -357,8 +371,8 @@ public class GridNioServer<T> {
                 threadName = "grid-nio-worker-" + srvName + "-" + i;
 
             AbstractNioClientWorker worker = directMode ?
-                new DirectNioClientWorker(i, igniteInstanceName, threadName, log) :
-                new ByteBufferNioClientWorker(i, igniteInstanceName, threadName, log);
+                new DirectNioClientWorker(i, igniteInstanceName, threadName, log, workerLsnr) :
+                new ByteBufferNioClientWorker(i, igniteInstanceName, threadName, log, workerLsnr);
 
             clientWorkers.add(worker);
 
@@ -428,8 +442,8 @@ public class GridNioServer<T> {
     public void start() {
         filterChain.start();
 
-        if (acceptThread != null)
-            acceptThread.start();
+        if (acceptWorker != null)
+            new IgniteThread(acceptWorker).start();
 
         for (IgniteThread thread : clientThreads)
             thread.start();
@@ -443,8 +457,8 @@ public class GridNioServer<T> {
             closed = true;
 
             // Make sure to entirely stop acceptor if any.
-            U.interrupt(acceptThread);
-            U.join(acceptThread, log);
+            U.cancel(acceptWorker);
+            U.join(acceptWorker, log);
 
             U.cancel(clientWorkers);
             U.join(clientWorkers, log);
@@ -732,7 +746,6 @@ public class GridNioServer<T> {
     /**
      * @return Future.
      */
-    @SuppressWarnings("ForLoopReplaceableByForEach")
     public IgniteInternalFuture<String> dumpStats() {
         String msg = "NIO server statistics [readerSesBalanceCnt=" + readerMoveCnt.get() +
             ", writerSesBalanceCnt=" + writerMoveCnt.get() + ']';
@@ -1028,6 +1041,22 @@ public class GridNioServer<T> {
         clientWorkers.get(balanceIdx).offer(req);
     }
 
+    /**
+     * Stop polling for write availability if write queue is empty.
+     */
+    private void stopPollingForWrite(SelectionKey key, GridSelectorNioSessionImpl ses) {
+        if (ses.procWrite.get()) {
+            ses.procWrite.set(false);
+
+            if (ses.writeQueue().isEmpty()) {
+                if ((key.interestOps() & SelectionKey.OP_WRITE) != 0)
+                    key.interestOps(key.interestOps() & (~SelectionKey.OP_WRITE));
+            }
+            else
+                ses.procWrite.set(true);
+        }
+    }
+
     /** {@inheritDoc} */
     @Override public String toString() {
         return S.toString(GridNioServer.class, this);
@@ -1045,11 +1074,17 @@ public class GridNioServer<T> {
          * @param igniteInstanceName Ignite instance name.
          * @param name Worker name.
          * @param log Logger.
+         * @param workerLsnr Worker lifecycle listener.
          * @throws IgniteCheckedException If selector could not be created.
          */
-        protected ByteBufferNioClientWorker(int idx, @Nullable String igniteInstanceName, String name, IgniteLogger log)
-            throws IgniteCheckedException {
-            super(idx, igniteInstanceName, name, log);
+        protected ByteBufferNioClientWorker(
+            int idx,
+            @Nullable String igniteInstanceName,
+            String name,
+            IgniteLogger log,
+            @Nullable GridWorkerListener workerLsnr
+        ) throws IgniteCheckedException {
+            super(idx, igniteInstanceName, name, log, workerLsnr);
 
             readBuf = directBuf ? ByteBuffer.allocateDirect(8 << 10) : ByteBuffer.allocate(8 << 10);
 
@@ -1057,11 +1092,11 @@ public class GridNioServer<T> {
         }
 
         /**
-        * Processes read-available event on the key.
-        *
-        * @param key Key that is ready to be read.
-        * @throws IOException If key read failed.
-        */
+         * Processes read-available event on the key.
+         *
+         * @param key Key that is ready to be read.
+         * @throws IOException If key read failed.
+         */
         @Override protected void processRead(SelectionKey key) throws IOException {
             if (skipRead) {
                 try {
@@ -1125,11 +1160,11 @@ public class GridNioServer<T> {
         }
 
         /**
-        * Processes write-ready event on the key.
-        *
-        * @param key Key that is ready to be written.
-        * @throws IOException If write failed.
-        */
+         * Processes write-ready event on the key.
+         *
+         * @param key Key that is ready to be written.
+         * @throws IOException If write failed.
+         */
         @Override protected void processWrite(SelectionKey key) throws IOException {
             WritableByteChannel sockCh = (WritableByteChannel)key.channel();
 
@@ -1146,16 +1181,7 @@ public class GridNioServer<T> {
                     req = ses.pollFuture();
 
                     if (req == null) {
-                        if (ses.procWrite.get()) {
-                            ses.procWrite.set(false);
-
-                            if (ses.writeQueue().isEmpty()) {
-                                if ((key.interestOps() & SelectionKey.OP_WRITE) != 0)
-                                    key.interestOps(key.interestOps() & (~SelectionKey.OP_WRITE));
-                            }
-                            else
-                                ses.procWrite.set(true);
-                        }
+                        stopPollingForWrite(key, ses);
 
                         break;
                     }
@@ -1215,11 +1241,17 @@ public class GridNioServer<T> {
          * @param igniteInstanceName Ignite instance name.
          * @param name Worker name.
          * @param log Logger.
+         * @param workerLsnr Worker lifecycle listener.
          * @throws IgniteCheckedException If selector could not be created.
          */
-        protected DirectNioClientWorker(int idx, @Nullable String igniteInstanceName, String name, IgniteLogger log)
-            throws IgniteCheckedException {
-            super(idx, igniteInstanceName, name, log);
+        protected DirectNioClientWorker(
+            int idx,
+            @Nullable String igniteInstanceName,
+            String name,
+            IgniteLogger log,
+            @Nullable GridWorkerListener workerLsnr
+        ) throws IgniteCheckedException {
+            super(idx, igniteInstanceName, name, log, workerLsnr);
         }
 
         /**
@@ -1312,7 +1344,6 @@ public class GridNioServer<T> {
          * @param key Key that is ready to be written.
          * @throws IOException If write failed.
          */
-        @SuppressWarnings("ForLoopReplaceableByForEach")
         private void processWriteSsl(SelectionKey key) throws IOException {
             WritableByteChannel sockCh = (WritableByteChannel)key.channel();
 
@@ -1332,10 +1363,14 @@ public class GridNioServer<T> {
             boolean handshakeFinished = sslFilter.lock(ses);
 
             try {
-                writeSslSystem(ses, sockCh);
+                boolean writeFinished = writeSslSystem(ses, sockCh);
 
-                if (!handshakeFinished)
+                if (!handshakeFinished) {
+                    if (writeFinished)
+                        stopPollingForWrite(key, ses);
+
                     return;
+                }
 
                 ByteBuffer sslNetBuf = ses.removeMeta(BUF_META_KEY);
 
@@ -1352,12 +1387,18 @@ public class GridNioServer<T> {
 
                         return;
                     }
+                    else {
+                        List<SessionWriteRequest> requests = ses.removeMeta(REQUESTS_META_KEY);
+
+                        if (requests != null)
+                            onRequestsWritten(ses, requests);
+                    }
                 }
 
                 ByteBuffer buf = ses.writeBuffer();
 
                 if (ses.meta(WRITE_BUF_LIMIT) != null)
-                    buf.limit((int)ses.meta(WRITE_BUF_LIMIT));
+                    buf.limit(ses.meta(WRITE_BUF_LIMIT));
 
                 SessionWriteRequest req = ses.removeMeta(NIO_OPERATION.ordinal());
 
@@ -1369,16 +1410,7 @@ public class GridNioServer<T> {
                             req = ses.pollFuture();
 
                             if (req == null && buf.position() == 0) {
-                                if (ses.procWrite.get()) {
-                                    ses.procWrite.set(false);
-
-                                    if (ses.writeQueue().isEmpty()) {
-                                        if ((key.interestOps() & SelectionKey.OP_WRITE) != 0)
-                                            key.interestOps(key.interestOps() & (~SelectionKey.OP_WRITE));
-                                    }
-                                    else
-                                        ses.procWrite.set(true);
-                                }
+                                stopPollingForWrite(key, ses);
 
                                 break;
                             }
@@ -1387,6 +1419,8 @@ public class GridNioServer<T> {
 
                     Message msg;
                     boolean finished = false;
+
+                    List<SessionWriteRequest> pendingRequests = new ArrayList<>(2);
 
                     if (req != null) {
                         msg = (Message)req.message();
@@ -1399,7 +1433,7 @@ public class GridNioServer<T> {
                         finished = msg.writeTo(buf, writer);
 
                         if (finished) {
-                            onMessageWritten(ses, msg);
+                            pendingRequests.add(req);
 
                             if (writer != null)
                                 writer.reset();
@@ -1408,8 +1442,6 @@ public class GridNioServer<T> {
 
                     // Fill up as many messages as possible to write buffer.
                     while (finished) {
-                        req.onMessageWritten();
-
                         req = systemMessage(ses);
 
                         if (req == null)
@@ -1428,7 +1460,7 @@ public class GridNioServer<T> {
                         finished = msg.writeTo(buf, writer);
 
                         if (finished) {
-                            onMessageWritten(ses, msg);
+                            pendingRequests.add(req);
 
                             if (writer != null)
                                 writer.reset();
@@ -1482,13 +1514,17 @@ public class GridNioServer<T> {
                     if (buf.hasRemaining()) {
                         ses.addMeta(BUF_META_KEY, buf);
 
+                        ses.addMeta(REQUESTS_META_KEY, pendingRequests);
+
                         break;
                     }
                     else {
+                        onRequestsWritten(ses, pendingRequests);
+
                         buf = ses.writeBuffer();
 
                         if (ses.meta(WRITE_BUF_LIMIT) != null)
-                            buf.limit((int)ses.meta(WRITE_BUF_LIMIT));
+                            buf.limit(ses.meta(WRITE_BUF_LIMIT));
                     }
                 }
             }
@@ -1501,8 +1537,10 @@ public class GridNioServer<T> {
          * @param ses NIO session.
          * @param sockCh Socket channel.
          * @throws IOException If failed.
+         *
+         * @return {@code True} if there's nothing else to write (last buffer is written and queue is empty).
          */
-        private void writeSslSystem(GridSelectorNioSessionImpl ses, WritableByteChannel sockCh)
+        private boolean writeSslSystem(GridSelectorNioSessionImpl ses, WritableByteChannel sockCh)
             throws IOException {
             ConcurrentLinkedQueue<ByteBuffer> queue = ses.meta(BUF_SSL_SYSTEM_META_KEY);
 
@@ -1521,8 +1559,10 @@ public class GridNioServer<T> {
                 if (!buf.hasRemaining())
                     queue.poll();
                 else
-                    break;
+                    return false;
             }
+
+            return true;
         }
 
         /**
@@ -1549,7 +1589,6 @@ public class GridNioServer<T> {
          * @param key Key that is ready to be written.
          * @throws IOException If write failed.
          */
-        @SuppressWarnings("ForLoopReplaceableByForEach")
         private void processWrite0(SelectionKey key) throws IOException {
             WritableByteChannel sockCh = (WritableByteChannel)key.channel();
 
@@ -1575,16 +1614,7 @@ public class GridNioServer<T> {
                     req = ses.pollFuture();
 
                     if (req == null && buf.position() == 0) {
-                        if (ses.procWrite.get()) {
-                            ses.procWrite.set(false);
-
-                            if (ses.writeQueue().isEmpty()) {
-                                if ((key.interestOps() & SelectionKey.OP_WRITE) != 0)
-                                    key.interestOps(key.interestOps() & (~SelectionKey.OP_WRITE));
-                            }
-                            else
-                                ses.procWrite.set(true);
-                        }
+                        stopPollingForWrite(key, ses);
 
                         return;
                     }
@@ -1683,12 +1713,25 @@ public class GridNioServer<T> {
     }
 
     /**
+     * Notifies SessionWriteRequests and it's messages when requests were actually written.
+     *
+     * @param ses GridNioSession.
+     * @param requests SessionWriteRequests.
+     */
+    private void onRequestsWritten(GridSelectorNioSessionImpl ses, List<SessionWriteRequest> requests) {
+        for (SessionWriteRequest request : requests) {
+            request.onMessageWritten();
+
+            onMessageWritten(ses, (Message)request.message());
+        }
+    }
+
+    /**
      * Handle message written event.
      *
      * @param ses Session.
      * @param msg Message.
      */
-    @SuppressWarnings("unchecked")
     private void onMessageWritten(GridSelectorNioSessionImpl ses, Message msg) {
         if (lsnr != null)
             lsnr.onMessageSent(ses, (T)msg);
@@ -1738,11 +1781,17 @@ public class GridNioServer<T> {
          * @param igniteInstanceName Ignite instance name.
          * @param name Worker name.
          * @param log Logger.
+         * @param workerLsnr Worker lifecycle listener.
          * @throws IgniteCheckedException If selector could not be created.
          */
-        protected AbstractNioClientWorker(int idx, @Nullable String igniteInstanceName, String name, IgniteLogger log)
-            throws IgniteCheckedException {
-            super(igniteInstanceName, name, log);
+        AbstractNioClientWorker(
+            int idx,
+            @Nullable String igniteInstanceName,
+            String name,
+            IgniteLogger log,
+            @Nullable GridWorkerListener workerLsnr
+        ) throws IgniteCheckedException {
+            super(igniteInstanceName, name, log, workerLsnr);
 
             createSelector();
 
@@ -1757,11 +1806,15 @@ public class GridNioServer<T> {
                 boolean reset = false;
 
                 while (!closed) {
+                    updateHeartbeat();
+
                     try {
                         if (reset)
                             createSelector();
 
                         bodyInternal();
+
+                        onIdle();
                     }
                     catch (IgniteCheckedException e) {
                         if (!Thread.currentThread().isInterrupted()) {
@@ -1790,11 +1843,14 @@ public class GridNioServer<T> {
                     if (err == null)
                         lsnr.onFailure(SYSTEM_WORKER_TERMINATION,
                             new IllegalStateException("Thread " + name() + " is terminated unexpectedly"));
-                    else if (err instanceof InterruptedException)
+                    else
                         lsnr.onFailure(SYSTEM_WORKER_TERMINATION, err);
                 }
                 else if (err != null)
                     lsnr.onFailure(SYSTEM_WORKER_TERMINATION, err);
+                else
+                    // In case of closed == true, prevent general-case termination handling.
+                    cancel();
             }
         }
 
@@ -1847,7 +1903,7 @@ public class GridNioServer<T> {
          *
          * @param req Change request.
          */
-        public void offer(SessionChangeRequest req) {
+        @Override public void offer(SessionChangeRequest req) {
             changeReqs.offer(req);
 
             if (select)
@@ -1896,7 +1952,11 @@ public class GridNioServer<T> {
                 while (!closed && selector.isOpen()) {
                     SessionChangeRequest req0;
 
+                    updateHeartbeat();
+
                     while ((req0 = changeReqs.poll()) != null) {
+                        updateHeartbeat();
+
                         switch (req0.operation()) {
                             case CONNECT: {
                                 NioOperationFuture fut = (NioOperationFuture)req0;
@@ -2056,7 +2116,7 @@ public class GridNioServer<T> {
                                 StringBuilder sb = new StringBuilder();
 
                                 try {
-                                    dumpStats(sb, p, p!= null);
+                                    dumpStats(sb, p, p != null);
                                 }
                                 finally {
                                     req.onDone(sb.toString());
@@ -2072,6 +2132,8 @@ public class GridNioServer<T> {
 
                         if (res > 0) {
                             // Walk through the ready keys collection and process network events.
+                            updateHeartbeat();
+
                             if (selectedKeys == null)
                                 processSelectedKeys(selector.selectedKeys());
                             else
@@ -2101,6 +2163,8 @@ public class GridNioServer<T> {
                         if (!changeReqs.isEmpty())
                             continue;
 
+                        updateHeartbeat();
+
                         // Wake up every 2 seconds to check if closed.
                         if (selector.select(2000) > 0) {
                             // Walk through the ready keys collection and process network events.
@@ -2109,6 +2173,10 @@ public class GridNioServer<T> {
                             else
                                 processSelectedKeysOptimized(selectedKeys.flip());
                         }
+
+                        // select() call above doesn't throw on interruption; checking it here to propagate timely.
+                        if (!closed && !isCancelled && Thread.interrupted())
+                            throw new InterruptedException();
                     }
                     finally {
                         select = false;
@@ -2158,7 +2226,7 @@ public class GridNioServer<T> {
         /**
          * @param ses Session.
          */
-        public final void registerWrite(GridSelectorNioSessionImpl ses) {
+        @Override public final void registerWrite(GridSelectorNioSessionImpl ses) {
             SelectionKey key = ses.key();
 
             if (key.isValid()) {
@@ -2310,7 +2378,7 @@ public class GridNioServer<T> {
          * @throws ClosedByInterruptException If this thread was interrupted while reading data.
          */
         private void processSelectedKeysOptimized(SelectionKey[] keys) throws ClosedByInterruptException {
-            for (int i = 0; ; i ++) {
+            for (int i = 0; ; i++) {
                 final SelectionKey key = keys[i];
 
                 if (key == null)
@@ -2474,7 +2542,7 @@ public class GridNioServer<T> {
                     }
                 }
                 catch (IgniteCheckedException e) {
-                    close(ses,  e);
+                    close(ses, e);
                 }
             }
         }
@@ -2616,17 +2684,32 @@ public class GridNioServer<T> {
         }
 
         /**
-         * Closes the session and all associated resources, then notifies the listener.
-         *
          * @param ses Session to be closed.
          * @param e Exception to be passed to the listener, if any.
          * @return {@code True} if this call closed the ses.
          */
         protected boolean close(final GridSelectorNioSessionImpl ses, @Nullable final IgniteCheckedException e) {
+            return close(ses, e, ses.closeSocketOnSessionClose());
+        }
+
+        /**
+         * Closes the session and all associated resources, then notifies the listener.
+         *
+         * @param ses Session to be closed.
+         * @param e Exception to be passed to the listener, if any.
+         * @param closeSock If {@code True} the channel will be closed.
+         * @return {@code True} if this call closed the ses.
+         */
+        protected boolean close(
+            final GridSelectorNioSessionImpl ses,
+            @Nullable final IgniteCheckedException e,
+            boolean closeSock
+        ) {
             if (e != null) {
                 // Print stack trace only if has runtime exception in it's cause.
                 if (e.hasCause(IOException.class))
-                    U.warn(log, "Closing NIO session because of unhandled exception [cls=" + e.getClass() +
+                    U.warn(log, "Client disconnected abruptly due to network connection loss or because " +
+                        "the connection was left open on application shutdown. [cls=" + e.getClass() +
                         ", msg=" + e.getMessage() + ']');
                 else
                     U.error(log, "Closing NIO session because of unhandled exception.", e);
@@ -2646,7 +2729,10 @@ public class GridNioServer<T> {
                         GridUnsafe.cleanDirectBuffer(ses.readBuffer());
                 }
 
-                closeKey(ses.key());
+                if (closeSock)
+                    closeKey(ses.key());
+                else
+                    ses.key().cancel(); // Unbind socket to the current SelectionKey.
 
                 if (e != null)
                     filterChain.onExceptionCaught(ses, e);
@@ -2702,7 +2788,6 @@ public class GridNioServer<T> {
          * @param key Key.
          * @throws IOException If failed.
          */
-        @SuppressWarnings("unchecked")
         private void processConnect(SelectionKey key) throws IOException {
             SocketChannel ch = (SocketChannel)key.channel();
 
@@ -2798,13 +2883,28 @@ public class GridNioServer<T> {
          * @param name Thread name.
          * @param log Log.
          * @param selector Which will accept incoming connections.
+         * @param workerLsnr Worker lifecycle listener.
          */
         protected GridNioAcceptWorker(
-            @Nullable String igniteInstanceName, String name, IgniteLogger log, Selector selector
+            @Nullable String igniteInstanceName,
+            String name,
+            IgniteLogger log,
+            Selector selector,
+            @Nullable GridWorkerListener workerLsnr
         ) {
-            super(igniteInstanceName, name, log);
+            super(igniteInstanceName, name, log, workerLsnr);
 
             this.selector = selector;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void cancel() {
+            super.cancel();
+
+            // If accept worker never was started then explicitly close selector, otherwise selector will be closed
+            // in finally block when workers thread will be stopped.
+            if (runner() == null)
+                closeSelector();
         }
 
         /** {@inheritDoc} */
@@ -2814,7 +2914,7 @@ public class GridNioServer<T> {
             try {
                 boolean reset = false;
 
-                while (!closed && !Thread.currentThread().isInterrupted()) {
+                while (!closed && !isCancelled()) {
                     try {
                         if (reset)
                             selector = createSelector(locAddr);
@@ -2854,7 +2954,9 @@ public class GridNioServer<T> {
                     lsnr.onFailure(CRITICAL_ERROR, err);
                 else if (err != null)
                     lsnr.onFailure(SYSTEM_WORKER_TERMINATION, err);
-
+                else
+                    // In case of closed == true, prevent general-case termination handling.
+                    cancel();
             }
         }
 
@@ -2866,13 +2968,19 @@ public class GridNioServer<T> {
         private void accept() throws IgniteCheckedException {
             try {
                 while (!closed && selector.isOpen() && !Thread.currentThread().isInterrupted()) {
+                    updateHeartbeat();
+
                     // Wake up every 2 seconds to check if closed.
                     if (selector.select(2000) > 0)
                         // Walk through the ready keys collection and process date requests.
                         processSelectedKeys(selector.selectedKeys());
+                    else
+                        updateHeartbeat();
 
                     if (balancer != null)
                         balancer.run();
+
+                    onIdle();
                 }
             }
             // Ignore this exception as thread interruption is equal to 'close' call.
@@ -2921,7 +3029,7 @@ public class GridNioServer<T> {
             if (log.isDebugEnabled())
                 log.debug("Processing keys in accept worker: " + keys.size());
 
-            for (Iterator<SelectionKey> iter = keys.iterator(); iter.hasNext();) {
+            for (Iterator<SelectionKey> iter = keys.iterator(); iter.hasNext(); ) {
                 SelectionKey key = iter.next();
 
                 iter.remove();
@@ -3300,17 +3408,17 @@ public class GridNioServer<T> {
         }
 
         /** {@inheritDoc} */
-        public NioOperation operation() {
+        @Override public NioOperation operation() {
             return op;
         }
 
         /** {@inheritDoc} */
-        public Object message() {
+        @Override public Object message() {
             return msg;
         }
 
         /** {@inheritDoc} */
-        public void resetSession(GridNioSession ses) {
+        @Override public void resetSession(GridNioSession ses) {
             assert msg instanceof Message : msg;
 
             this.ses = (GridSelectorNioSessionImpl)ses;
@@ -3324,7 +3432,7 @@ public class GridNioServer<T> {
         }
 
         /** {@inheritDoc} */
-        public GridSelectorNioSessionImpl session() {
+        @Override public GridSelectorNioSessionImpl session() {
             return ses;
         }
 
@@ -3448,7 +3556,8 @@ public class GridNioServer<T> {
         }
 
         /** {@inheritDoc} */
-        @Override public void onExceptionCaught(GridNioSession ses, IgniteCheckedException ex) throws IgniteCheckedException {
+        @Override public void onExceptionCaught(GridNioSession ses,
+            IgniteCheckedException ex) throws IgniteCheckedException {
             proceedExceptionCaught(ses, ex);
         }
 
@@ -3546,7 +3655,7 @@ public class GridNioServer<T> {
         private boolean directBuf;
 
         /** Byte order. */
-        private ByteOrder byteOrder = ByteOrder.nativeOrder();
+        private ByteOrder byteOrder = ByteOrder.LITTLE_ENDIAN;
 
         /** NIO server listener. */
         private GridNioServerListener<T> lsnr;
@@ -3596,6 +3705,9 @@ public class GridNioServer<T> {
         /** */
         private boolean readWriteSelectorsAssign;
 
+        /** Worker lifecycle listener to be used by server's worker threads. */
+        private GridWorkerListener workerLsnr;
+
         /**
          * Finishes building the instance.
          *
@@ -3625,6 +3737,7 @@ public class GridNioServer<T> {
                 skipRecoveryPred,
                 msgQueueLsnr,
                 readWriteSelectorsAssign,
+                workerLsnr,
                 filters != null ? Arrays.copyOf(filters, filters.length) : EMPTY_FILTERS
             );
 
@@ -3876,6 +3989,16 @@ public class GridNioServer<T> {
          */
         public Builder<T> messageQueueSizeListener(IgniteBiInClosure<GridNioSession, Integer> msgQueueLsnr) {
             this.msgQueueLsnr = msgQueueLsnr;
+
+            return this;
+        }
+
+        /**
+         * @param workerLsnr Worker lifecycle listener.
+         * @return This for chaining.
+         */
+        public Builder<T> workerListener(GridWorkerListener workerLsnr) {
+            this.workerLsnr = workerLsnr;
 
             return this;
         }

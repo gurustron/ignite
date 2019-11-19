@@ -346,7 +346,8 @@ namespace Apache.Ignite.Core.Tests.Cache
             Assert.AreEqual(TransactionState.Active, tx.State);
             Assert.IsTrue(tx.StartTime.Ticks > 0);
             Assert.AreEqual(tx.NodeId, GetIgnite(0).GetCluster().GetLocalNode().Id);
-
+            Assert.AreEqual(Transactions.DefaultTimeoutOnPartitionMapExchange, TimeSpan.Zero);
+            
             DateTime startTime1 = tx.StartTime;
 
             tx.Commit();
@@ -438,7 +439,7 @@ namespace Apache.Ignite.Core.Tests.Cache
 
             Assert.AreEqual(TransactionState.MarkedRollback, tx.State);
 
-            var ex = Assert.Throws<TransactionRollbackException>(() => tx.Commit());
+            Assert.Throws<TransactionRollbackException>(() => tx.Commit());
 
             tx.Dispose();
 
@@ -570,8 +571,16 @@ namespace Apache.Ignite.Core.Tests.Cache
 
             Assert.AreEqual(2, aex.InnerExceptions.Count);
 
-            var deadlockEx = aex.InnerExceptions.OfType<TransactionDeadlockException>().First();
-            Assert.IsTrue(deadlockEx.Message.Trim().StartsWith("Deadlock detected:"), deadlockEx.Message);
+            var deadlockEx = aex.InnerExceptions.OfType<TransactionDeadlockException>().FirstOrDefault();
+
+            if (deadlockEx != null)
+            {
+                Assert.IsTrue(deadlockEx.Message.Trim().StartsWith("Deadlock detected:"), deadlockEx.Message);
+            }
+            else
+            {
+                Assert.Fail("Unexpected exception: " + aex);
+            }
         }
 
         /// <summary>

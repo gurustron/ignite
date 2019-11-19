@@ -30,6 +30,9 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
     private long totalAllocatedPages;
 
     /** */
+    private long totalUsedPages;
+
+    /** */
     private long totalAllocatedSize;
 
     /** */
@@ -60,7 +63,10 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
     private long physicalMemorySize;
 
     /** */
-    private long checkpointBufferPages;
+    private long usedCheckpointBufferPages;
+
+    /** */
+    private long usedCheckpointBufferSize;
 
     /** */
     private long checkpointBufferSize;
@@ -89,6 +95,7 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
     public DataRegionMetricsSnapshot(DataRegionMetrics metrics) {
         name = metrics.getName();
         totalAllocatedPages = metrics.getTotalAllocatedPages();
+        totalUsedPages = metrics.getTotalUsedPages();
         totalAllocatedSize = metrics.getTotalAllocatedSize();
         allocationRate = metrics.getAllocationRate();
         evictionRate = metrics.getEvictionRate();
@@ -99,7 +106,8 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
         pageReplaceAge = metrics.getPagesReplaceAge();
         physicalMemoryPages = metrics.getPhysicalMemoryPages();
         physicalMemorySize = metrics.getPhysicalMemorySize();
-        checkpointBufferPages = metrics.getCheckpointBufferPages();
+        usedCheckpointBufferPages = metrics.getUsedCheckpointBufferPages();
+        usedCheckpointBufferSize = metrics.getUsedCheckpointBufferSize();
         checkpointBufferSize = metrics.getCheckpointBufferSize();
         pageSize = metrics.getPageSize();
         readPages = metrics.getPagesRead();
@@ -117,6 +125,11 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
     /** {@inheritDoc} */
     @Override public long getTotalAllocatedPages() {
         return totalAllocatedPages;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getTotalUsedPages() {
+        return totalUsedPages;
     }
 
     /** {@inheritDoc} */
@@ -170,8 +183,13 @@ public class DataRegionMetricsSnapshot implements DataRegionMetrics {
     }
 
     /** {@inheritDoc} */
-    @Override public long getCheckpointBufferPages() {
-        return checkpointBufferPages;
+    @Override public long getUsedCheckpointBufferPages() {
+        return usedCheckpointBufferPages;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getUsedCheckpointBufferSize() {
+        return usedCheckpointBufferSize;
     }
 
     /** {@inheritDoc} */

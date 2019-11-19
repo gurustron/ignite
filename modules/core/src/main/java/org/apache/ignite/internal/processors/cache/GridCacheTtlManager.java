@@ -20,7 +20,10 @@ package org.apache.ignite.internal.processors.cache;
 import java.util.concurrent.atomic.LongAdder;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.internal.NodeStoppingException;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearCacheAdapter;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearCacheEntry;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
@@ -37,8 +40,21 @@ import org.jetbrains.annotations.Nullable;
  * {@link CacheConfiguration#isEagerTtl()} flag is set.
  */
 public class GridCacheTtlManager extends GridCacheManagerAdapter {
-    /** Entries pending removal. */
+    /**
+     * Throttling timeout in millis which avoid excessive PendingTree access on unwind
+     * if there is nothing to clean yet.
+     */
+    private final long unwindThrottlingTimeout = Long.getLong(
+        IgniteSystemProperties.IGNITE_UNWIND_THROTTLING_TIMEOUT, 500L);
+
+    /** Entries pending removal. This collection tracks entries for near cache only. */
     private GridConcurrentSkipListSetEx pendingEntries;
+
+    /** Indicates that  */
+    protected volatile boolean hasPendingEntries;
+
+    /** Timestamp when next clean try will be allowed. Used for throttling on per-cache basis. */
+    protected volatile long nextCleanTime;
 
     /** See {@link CacheConfiguration#isEagerTtl()}. */
     private volatile boolean eagerTtlEnabled;
@@ -70,7 +86,7 @@ public class GridCacheTtlManager extends GridCacheManagerAdapter {
                 }
 
                 if (touch)
-                    entry.context().evicts().touch(entry, null);
+                    entry.touch();
             }
         };
 
@@ -139,6 +155,22 @@ public class GridCacheTtlManager extends GridCacheManagerAdapter {
         return (pendingEntries != null ? pendingEntries.sizex() : 0) + cctx.offheap().expiredSize();
     }
 
+    /**
+     * Updates the flag {@code hasPendingEntries} with the given value.
+     *
+     * @param update {@code true} if the underlying pending tree has entries with expire policy enabled.
+     */
+    public void hasPendingEntries(boolean update) {
+        hasPendingEntries = update;
+    }
+
+    /**
+     * @return {@code true} if the underlying pending tree has entries with expire policy enabled.
+     */
+    public boolean hasPendingEntries() {
+        return hasPendingEntries;
+    }
+
     /** {@inheritDoc} */
     @Override public void printMemoryStats() {
         try {
@@ -150,13 +182,6 @@ public class GridCacheTtlManager extends GridCacheManagerAdapter {
         catch (IgniteCheckedException e) {
             U.error(log, "Failed to print statistics: " + e, e);
         }
-    }
-
-    /**
-     * Expires entries by TTL.
-     */
-    public void expire() {
-        expire(-1);
     }
 
     /**
@@ -200,10 +225,19 @@ public class GridCacheTtlManager extends GridCacheManagerAdapter {
                 }
             }
 
+            if(!cctx.affinityNode())
+                return false;  /* Pending tree never contains entries for that cache */
+
+            if (!hasPendingEntries || nextCleanTime > U.currentTimeMillis())
+                return false;
+
             boolean more = cctx.offheap().expire(dhtCtx, expireC, amount);
 
             if (more)
                 return true;
+
+            // There is nothing to clean, so the next clean up can be postponed.
+            nextCleanTime = U.currentTimeMillis() + unwindThrottlingTimeout;
 
             if (amount != -1 && pendingEntries != null) {
                 EntryWrapper e = pendingEntries.firstx();
@@ -211,13 +245,26 @@ public class GridCacheTtlManager extends GridCacheManagerAdapter {
                 return e != null && e.expireTime <= now;
             }
         }
+        catch (GridDhtInvalidPartitionException e) {
+            if (log.isDebugEnabled())
+                log.debug("Partition became invalid during rebalancing (will ignore): " + e.partition());
+
+            return false;
+        }
         catch (IgniteCheckedException e) {
             U.error(log, "Failed to process entry expiration: " + e, e);
+        }
+        catch (IgniteException e) {
+            if (e.hasCause(NodeStoppingException.class)) {
+                if (log.isDebugEnabled())
+                    log.debug("Failed to expire because node is stopped: " + e);
+            }
+            else
+                throw e;
         }
 
         return false;
     }
-
 
     /**
      * @param cctx1 First cache context.

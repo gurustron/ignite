@@ -16,7 +16,6 @@
  */
 package org.apache.ignite.internal.processors.database.baseline;
 
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.concurrent.Callable;
@@ -30,6 +29,8 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.cache.distributed.near.IgniteCacheQueryNodeRestartSelfTest;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
+
 /**
  *
  */
@@ -42,7 +43,7 @@ public class IgniteChangingBaselineCacheQueryNodeRestartSelfTest extends IgniteC
             new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(
                     new DataRegionConfiguration()
-                        .setMaxSize(200 * 1024 * 1024)
+                        .setMaxSize(200L * 1024 * 1024)
                         .setPersistenceEnabled(true)
                 )
         );
@@ -52,6 +53,8 @@ public class IgniteChangingBaselineCacheQueryNodeRestartSelfTest extends IgniteC
 
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
+        System.setProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED, "false");
+
         cleanPersistenceDir();
 
         startGrids(gridCount());
@@ -68,6 +71,8 @@ public class IgniteChangingBaselineCacheQueryNodeRestartSelfTest extends IgniteC
         stopAllGrids();
 
         cleanPersistenceDir();
+
+        System.clearProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED);
     }
 
     /** {@inheritDoc} */

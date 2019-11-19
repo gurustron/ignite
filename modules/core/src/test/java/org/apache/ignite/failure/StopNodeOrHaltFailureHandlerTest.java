@@ -28,6 +28,7 @@ import org.apache.ignite.internal.util.typedef.PE;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.multijvm.IgniteProcessProxy;
+import org.junit.Test;
 
 /**
  * {@link StopNodeOrHaltFailureHandler} tests.
@@ -47,11 +48,6 @@ public class StopNodeOrHaltFailureHandlerTest extends GridCommonAbstractTest {
     }
 
     /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-    }
-
-    /** {@inheritDoc} */
     @Override protected FailureHandler getFailureHandler(String igniteInstanceName) {
         return igniteInstanceName.endsWith("2") ?
             new StopNodeOrHaltFailureHandler(false, 0) :
@@ -61,6 +57,7 @@ public class StopNodeOrHaltFailureHandlerTest extends GridCommonAbstractTest {
     /**
      * Tests failed node's JVM is halted after triggering StopNodeOrHaltFailureHandler.
      */
+    @Test
     public void testJvmHalted() throws Exception {
         IgniteEx g = grid(0);
         IgniteEx rmt1 = grid(1);

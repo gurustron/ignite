@@ -23,7 +23,6 @@ namespace Apache.Ignite.Core.Tests
     using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Threading;
-    using System.Threading.Tasks;
     using Apache.Ignite.Core.Cache.Configuration;
     using Apache.Ignite.Core.Cluster;
     using Apache.Ignite.Core.Common;
@@ -59,7 +58,7 @@ namespace Apache.Ignite.Core.Tests
             DateTime.Now,
             byte.MinValue,
             short.MaxValue,
-            
+
             // Enums.
             CacheMode.Local,
             GCCollectionMode.Forced,
@@ -94,7 +93,7 @@ namespace Apache.Ignite.Core.Tests
 
                 MessagingTestHelper.AssertFailures();
             }
-            finally 
+            finally
             {
                 // Stop all grids between tests to drop any hanging messages
                 Ignition.StopAll(true);
@@ -107,7 +106,6 @@ namespace Apache.Ignite.Core.Tests
         [Test]
         public void TestMessageDataTypes()
         {
-            var topic = "dataTypes";
             object lastMsg = null;
             var evt = new AutoResetEvent(false);
 
@@ -121,16 +119,15 @@ namespace Apache.Ignite.Core.Tests
                 return true;
             });
 
-            messaging1.LocalListen(listener, topic);
-
             foreach (var msg in Objects.Where(x => x != null))
             {
+                var topic = "dataTypes" + Guid.NewGuid();
+                messaging1.LocalListen(listener, topic);
                 messaging2.Send(msg, topic);
                 evt.WaitOne(500);
                 Assert.AreEqual(msg, lastMsg);
+                messaging1.StopLocalListen(listener, topic);
             }
-
-            messaging1.StopLocalListen(listener, topic);
         }
 
         /// <summary>
@@ -466,7 +463,7 @@ namespace Apache.Ignite.Core.Tests
 
             if (sharedResult.Length != 0)
             {
-                Assert.Fail("Unexpected messages ({0}): {1}; last sent message: {2}", sharedResult.Length, 
+                Assert.Fail("Unexpected messages ({0}): {1}; last sent message: {2}", sharedResult.Length,
                     string.Join(",", sharedResult), lastMsg);
             }
         }
@@ -574,7 +571,7 @@ namespace Apache.Ignite.Core.Tests
     {
         /** */
         public static readonly ConcurrentStack<string> ReceivedMessages = new ConcurrentStack<string>();
-        
+
         /** */
         private static readonly ConcurrentStack<string> Failures = new ConcurrentStack<string>();
 
@@ -626,7 +623,7 @@ namespace Apache.Ignite.Core.Tests
             // check that all messages came from local node.
             var localNodeId = cluster.Ignite.GetCluster().GetLocalNode().Id;
             Assert.AreEqual(localNodeId, LastNodeIds.Distinct().Single());
-            
+
             AssertFailures();
         }
 
@@ -670,7 +667,7 @@ namespace Apache.Ignite.Core.Tests
                 }
                 catch (Exception ex)
                 {
-                    // When executed on remote nodes, these exceptions will not go to sender, 
+                    // When executed on remote nodes, these exceptions will not go to sender,
                     // so we have to accumulate them.
                     Failures.Push(string.Format("Exception in Listen (msg: {0}, id: {1}): {2}", message, nodeId, ex));
                     throw;

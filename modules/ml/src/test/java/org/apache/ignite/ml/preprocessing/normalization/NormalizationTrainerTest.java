@@ -17,60 +17,52 @@
 
 package org.apache.ignite.ml.preprocessing.normalization;
 
-import org.apache.ignite.ml.dataset.DatasetBuilder;
-import org.apache.ignite.ml.dataset.impl.local.LocalDatasetBuilder;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import org.apache.ignite.ml.TestUtils;
+import org.apache.ignite.ml.common.TrainerTest;
+import org.apache.ignite.ml.dataset.DatasetBuilder;
+import org.apache.ignite.ml.dataset.feature.extractor.Vectorizer;
+import org.apache.ignite.ml.dataset.feature.extractor.impl.DummyVectorizer;
+import org.apache.ignite.ml.dataset.impl.local.LocalDatasetBuilder;
+import org.apache.ignite.ml.math.primitives.vector.Vector;
+import org.apache.ignite.ml.math.primitives.vector.VectorUtils;
+import org.apache.ignite.ml.preprocessing.binarization.BinarizationTrainer;
+import org.junit.Test;
 
+import static org.apache.ignite.ml.TestUtils.assertEquals;
 import static org.junit.Assert.assertArrayEquals;
 
 /**
- * Tests for {@link NormalizationTrainer}.
+ * Tests for {@link BinarizationTrainer}.
  */
-@RunWith(Parameterized.class)
-public class NormalizationTrainerTest {
-    /** Parameters. */
-    @Parameterized.Parameters(name = "Data divided on {0} partitions")
-    public static Iterable<Integer[]> data() {
-        return Arrays.asList(
-            new Integer[] {1},
-            new Integer[] {2},
-            new Integer[] {3},
-            new Integer[] {5},
-            new Integer[] {7},
-            new Integer[] {100},
-            new Integer[] {1000}
-        );
-    }
-
-    /** Number of partitions. */
-    @Parameterized.Parameter
-    public int parts;
-
+public class NormalizationTrainerTest extends TrainerTest {
     /** Tests {@code fit()} method. */
     @Test
     public void testFit() {
-        Map<Integer, double[]> data = new HashMap<>();
-        data.put(1, new double[] {2, 4, 1});
-        data.put(2, new double[] {1, 8, 22});
-        data.put(3, new double[] {4, 10, 100});
-        data.put(4, new double[] {0, 22, 300});
+        Map<Integer, Vector> data = new HashMap<>();
+        data.put(1, VectorUtils.of(2, 4, 1));
+        data.put(2, VectorUtils.of(1, 8, 22));
+        data.put(3, VectorUtils.of(4, 10, 100));
+        data.put(4, VectorUtils.of(0, 22, 300));
 
-        DatasetBuilder<Integer, double[]> datasetBuilder = new LocalDatasetBuilder<>(data, parts);
+        DatasetBuilder<Integer, Vector> datasetBuilder = new LocalDatasetBuilder<>(data, parts);
 
-        NormalizationTrainer<Integer, double[]> standardizationTrainer = new NormalizationTrainer<>();
+        final Vectorizer<Integer, Vector, Integer, Double> vectorizer = new DummyVectorizer<>(0, 1, 2);
 
-        NormalizationPreprocessor<Integer, double[]> preprocessor = standardizationTrainer.fit(
+        NormalizationTrainer<Integer, Vector> normalizationTrainer = new NormalizationTrainer<Integer, Vector>()
+            .withP(3);
+
+        assertEquals(3., normalizationTrainer.p(), 0);
+
+        NormalizationPreprocessor<Integer, Vector> preprocessor = normalizationTrainer.fit(
+            TestUtils.testEnvBuilder(),
             datasetBuilder,
-            (k, v) -> v
+            vectorizer
         );
 
-        assertArrayEquals(new double[] {0, 4, 1}, preprocessor.getMin(), 1e-8);
-        assertArrayEquals(new double[] {4, 22, 300}, preprocessor.getMax(), 1e-8);
+        assertEquals(normalizationTrainer.p(), preprocessor.p(), 0);
+
+        assertArrayEquals(new double[] {0.125, 0.99, 0.125}, preprocessor.apply(5, VectorUtils.of(1., 8., 1.)).features().asArray(), 1e-2);
     }
 }

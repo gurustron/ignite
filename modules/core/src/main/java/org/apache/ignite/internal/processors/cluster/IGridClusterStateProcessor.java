@@ -29,6 +29,7 @@ import org.apache.ignite.internal.managers.discovery.DiscoCache;
 import org.apache.ignite.internal.processors.GridProcessor;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.StateChangeRequest;
+import org.apache.ignite.lang.IgniteFuture;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -39,6 +40,21 @@ public interface IGridClusterStateProcessor extends GridProcessor {
      * @return Cluster state to be used on public API.
      */
     boolean publicApiActiveState(boolean waitForTransition);
+
+    /**
+     * @return Cluster state to be used on public API.
+     */
+    IgniteFuture<Boolean> publicApiActiveStateAsync(boolean waitForTransition);
+
+    /**
+     * @return Grid read only mode to be used on public API.
+     */
+    boolean publicApiReadOnlyMode();
+
+    /**
+     * @return Time change of read only mode to be used on public API.
+     */
+    long readOnlyModeStateChangeTime();
 
     /**
      * @param discoCache Discovery data cache.
@@ -84,6 +100,8 @@ public interface IGridClusterStateProcessor extends GridProcessor {
 
     /**
      * @param activate New cluster state.
+     * @param baselineNodes New baseline nodes.
+     * @param forceChangeBaselineTopology Force change baseline topology.
      * @return State change future.
      */
     IgniteInternalFuture<?> changeGlobalState(
@@ -91,6 +109,26 @@ public interface IGridClusterStateProcessor extends GridProcessor {
         Collection<? extends BaselineNode> baselineNodes,
         boolean forceChangeBaselineTopology
     );
+
+    /**
+     * @param activate New cluster state.
+     * @param readOnly Enable read-only mode.
+     * @param baselineNodes New baseline nodes.
+     * @param forceChangeBaselineTopology Force change baseline topology.
+     * @return State change future.
+     */
+    IgniteInternalFuture<?> changeGlobalState(
+        boolean activate,
+        boolean readOnly,
+        Collection<? extends BaselineNode> baselineNodes,
+        boolean forceChangeBaselineTopology
+    );
+
+    /**
+     * @param readOnly Enable/disable read-only mode.
+     * @return State change future.
+     */
+    IgniteInternalFuture<?> changeGlobalState(boolean readOnly);
 
     /**
      * @param errs Errors.

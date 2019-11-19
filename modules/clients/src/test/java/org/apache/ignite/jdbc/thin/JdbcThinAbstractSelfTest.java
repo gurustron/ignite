@@ -28,46 +28,39 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Callable;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.odbc.ClientListenerProcessor;
 import org.apache.ignite.internal.processors.port.GridPortRecord;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.GridTestUtils.RunnableX;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Connection test.
  */
 @SuppressWarnings("ThrowableNotThrown")
 public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
+
+    /** Signals that tests should start in affinity awareness mode. */
+    public static boolean affinityAwareness;
+
     /**
      * @param r Runnable to check support.
      */
     protected void checkNotSupported(final RunnableX r) {
-        GridTestUtils.assertThrows(log,
-            new Callable<Object>() {
-                @Override public Object call() throws Exception {
-                    r.run();
-
-                    return null;
-                }
-            }, SQLFeatureNotSupportedException.class, null);
+        GridTestUtils.assertThrowsWithCause(r, SQLFeatureNotSupportedException.class);
     }
 
     /**
      * @param r Runnable to check on closed connection.
      */
     protected void checkConnectionClosed(final RunnableX r) {
-        GridTestUtils.assertThrows(log,
-            new Callable<Object>() {
-                @Override public Object call() throws Exception {
-                    r.run();
+        GridTestUtils.assertThrowsAnyCause(log,
+            () -> {
+                r.run();
 
-                    return null;
-                }
+                return null;
             }, SQLException.class, "Connection is closed");
     }
 
@@ -75,13 +68,11 @@ public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
      * @param r Runnable to check on closed statement.
      */
     protected void checkStatementClosed(final RunnableX r) {
-        GridTestUtils.assertThrows(log,
-            new Callable<Object>() {
-                @Override public Object call() throws Exception {
-                    r.run();
+        GridTestUtils.assertThrowsAnyCause(log,
+            () -> {
+                r.run();
 
-                    return null;
-                }
+                return null;
             }, SQLException.class, "Statement is closed");
     }
 
@@ -89,24 +80,12 @@ public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
      * @param r Runnable to check on closed result set.
      */
     protected void checkResultSetClosed(final RunnableX r) {
-        GridTestUtils.assertThrows(log,
-            new Callable<Object>() {
-                @Override public Object call() throws Exception {
-                    r.run();
+        GridTestUtils.assertThrowsAnyCause(log,
+            () -> {
+                r.run();
 
-                    return null;
-                }
+                return null;
             }, SQLException.class, "Result set is closed");
-    }
-
-    /**
-     * Runnable that can throw an exception.
-     */
-    interface RunnableX {
-        /**
-         * @throws Exception On error.
-         */
-        void run() throws Exception;
     }
 
     /**
@@ -114,7 +93,7 @@ public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
      * @param params Connection parameters.
      * @return Thin JDBC connection to specified node.
      */
-    static Connection connect(IgniteEx node, String params) throws SQLException {
+    protected Connection connect(IgniteEx node, String params) throws SQLException {
         Collection<GridPortRecord> recs = node.context().ports().records();
 
         GridPortRecord cliLsnrRec = null;
@@ -143,7 +122,7 @@ public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
      * @return Result set.
      * @throws RuntimeException if failed.
      */
-    static List<List<?>> execute(Connection conn, String sql, Object... args) throws SQLException {
+    protected List<List<?>> execute(Connection conn, String sql, Object... args) throws SQLException {
         try (PreparedStatement s = conn.prepareStatement(sql)) {
             for (int i = 0; i < args.length; i++)
                 s.setObject(i + 1, args[i]);
@@ -171,5 +150,10 @@ public class JdbcThinAbstractSelfTest extends GridCommonAbstractTest {
             else
                 return Collections.emptyList();
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override protected boolean keepSerializedObjects() {
+        return true;
     }
 }

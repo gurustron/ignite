@@ -20,6 +20,7 @@ namespace Apache.Ignite.Core.Client
     using System;
     using System.Collections.Generic;
     using System.Diagnostics.CodeAnalysis;
+    using System.Net;
     using Apache.Ignite.Core.Binary;
     using Apache.Ignite.Core.Client.Cache;
 
@@ -90,6 +91,12 @@ namespace Apache.Ignite.Core.Client
         ICollection<string> GetCacheNames();
 
         /// <summary>
+        /// Gets Ignite cluster.
+        /// </summary>
+        /// <returns>Instance of <see cref="IClientCluster" /> interface.</returns>
+        IClientCluster GetCluster();
+
+        /// <summary>
         /// Destroys dynamically created (with <see cref="CreateCache{TK,TV}(string)"/> or 
         /// <see cref="GetOrCreateCache{TK,TV}(string)"/>) cache.
         /// </summary>
@@ -108,5 +115,19 @@ namespace Apache.Ignite.Core.Client
         /// </summary>
         [SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate", Justification = "Semantics.")]
         IgniteClientConfiguration GetConfiguration();
+
+        /// <summary>
+        /// Gets the current remote EndPoint.
+        /// </summary>
+        [SuppressMessage("Microsoft.Naming", "CA1702:CompoundWordsShouldBeCasedCorrectly",
+            Justification = "Consistency with EndPoint class name.")]
+        EndPoint RemoteEndPoint { get; }
+
+        /// <summary>
+        /// Gets the current local EndPoint.
+        /// </summary>
+        [SuppressMessage("Microsoft.Naming", "CA1702:CompoundWordsShouldBeCasedCorrectly",
+            Justification = "Consistency with EndPoint class name.")]
+        EndPoint LocalEndPoint { get; }
     }
 }

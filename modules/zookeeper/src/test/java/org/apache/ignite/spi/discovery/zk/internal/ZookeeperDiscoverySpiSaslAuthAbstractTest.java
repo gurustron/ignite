@@ -20,6 +20,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import javax.security.auth.login.Configuration;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -109,6 +110,8 @@ public abstract class ZookeeperDiscoverySpiSaslAuthAbstractTest extends GridComm
 
     /** */
     protected void clearSaslSystemProperties() {
+        Configuration.setConfiguration(null);
+
         System.clearProperty(AUTH_PROVIDER);
 
         System.clearProperty(SASL_CONFIG);
@@ -137,6 +140,8 @@ public abstract class ZookeeperDiscoverySpiSaslAuthAbstractTest extends GridComm
 
     /** */
     private void prepareSaslSystemProperties() {
+        Configuration.setConfiguration(null);
+
         System.setProperty(SASL_CONFIG, Paths.get(tmpDir.getPath().toString(), JAAS_CONF_FILE).toString());
 
         System.setProperty(AUTH_PROVIDER, "org.apache.zookeeper.server.auth.SASLAuthenticationProvider");

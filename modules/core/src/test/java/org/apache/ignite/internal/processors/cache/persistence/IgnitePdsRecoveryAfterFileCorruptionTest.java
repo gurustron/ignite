@@ -21,8 +21,10 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -47,19 +49,16 @@ import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStor
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
+import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
+import org.apache.ignite.testframework.MvccFeatureChecker;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  * This test generates WAL & Page Store with N pages, then rewrites pages with zeroes and tries to acquire all pages.
  */
 public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstractTest {
-    /** Ip finder. */
-    private static final TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
     /** Total pages. */
     private static final int totalPages = 512;
 
@@ -76,14 +75,19 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
         CacheConfiguration ccfg = new CacheConfiguration(cacheName);
         ccfg.setAffinity(new RendezvousAffinityFunction(true, 1));
 
-        ccfg.setRebalanceMode(CacheRebalanceMode.NONE);
+        if (MvccFeatureChecker.forcedMvcc())
+            ccfg.setRebalanceDelay(Long.MAX_VALUE);
+        else
+            ccfg.setRebalanceMode(CacheRebalanceMode.NONE);
+
+        ccfg.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
 
         cfg.setCacheConfiguration(ccfg);
 
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
                 new DataRegionConfiguration()
-                    .setMaxSize(1024 * 1024 * 1024)
+                    .setMaxSize(1024L * 1024 * 1024)
                     .setPersistenceEnabled(true)
                     .setName(policyName))
             .setWalMode(WALMode.LOG_ONLY)
@@ -91,11 +95,6 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
             .setAlwaysWriteFullPages(true);
 
         cfg.setDataStorageConfiguration(memCfg);
-
-        cfg.setDiscoverySpi(
-            new TcpDiscoverySpi()
-                .setIpFinder(ipFinder)
-        );
 
         return cfg;
     }
@@ -117,6 +116,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testPageRecoveryAfterFileCorruption() throws Exception {
         IgniteEx ig = startGrid(0);
 
@@ -202,7 +202,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
             final long pageAddr = mem.writeLock(fullId.groupId(), fullId.pageId(), page);
 
             try {
-                pageIO.initNewPage(pageAddr, fullId.pageId(), mem.pageSize());
+                pageIO.initNewPage(pageAddr, fullId.pageId(), mem.realPageSize(fullId.groupId()));
             }
             finally {
                 mem.writeUnlock(fullId.groupId(), fullId.pageId(), page, null, true);
@@ -234,7 +234,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
 
         long size = fileIO.size();
 
-        fileIO.write(ByteBuffer.allocate((int)size - filePageStore.headerSize()), filePageStore.headerSize());
+        fileIO.writeFully(ByteBuffer.allocate((int)size - filePageStore.headerSize()), filePageStore.headerSize());
 
         fileIO.force();
     }
@@ -261,7 +261,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
                 try {
                     long pageAddr = mem.readLock(fullId.groupId(), fullId.pageId(), page);
 
-                    for (int j = PageIO.COMMON_HEADER_END; j < mem.pageSize(); j += 4)
+                    for (int j = PageIO.COMMON_HEADER_END; j < mem.realPageSize(fullId.groupId()); j += 4)
                         assertEquals(j + (int)fullId.pageId(), PageUtils.getInt(pageAddr, j));
 
                     mem.readUnlock(fullId.groupId(), fullId.pageId(), page);
@@ -305,7 +305,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
                 PageIO.setPageId(pageAddr, fullId.pageId());
 
                 try {
-                    for (int j = PageIO.COMMON_HEADER_END; j < mem.pageSize(); j += 4)
+                    for (int j = PageIO.COMMON_HEADER_END; j < mem.realPageSize(fullId.groupId()); j += 4)
                         PageUtils.putInt(pageAddr, j, j + (int)fullId.pageId());
                 }
                 finally {
@@ -317,49 +317,48 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
             }
         }
 
-        Collection<FullPageId> pageIds = mem.beginCheckpoint();
+        Collection<FullPageId> pageIds = mem.beginCheckpoint(new GridFinishedFuture());
 
         info("Acquired pages for checkpoint: " + pageIds.size());
 
         try {
-            ByteBuffer tmpBuf = ByteBuffer.allocate(mem.pageSize());
-
-            tmpBuf.order(ByteOrder.nativeOrder());
-
             long begin = System.currentTimeMillis();
 
             long cp = 0;
 
-            long write = 0;
+            AtomicLong write = new AtomicLong();
+
+            PageStoreWriter pageStoreWriter = (fullPageId, buf, tag) -> {
+                int groupId = fullPageId.groupId();
+                long pageId = fullPageId.pageId();
+
+                for (int j = PageIO.COMMON_HEADER_END; j < mem.realPageSize(groupId); j += 4)
+                    assertEquals(j + (int)pageId, buf.getInt(j));
+
+                buf.rewind();
+
+                long writeStart = System.nanoTime();
+
+                storeMgr.write(cacheId, pageId, buf, tag);
+
+                long writeEnd = System.nanoTime();
+
+                write.getAndAdd(writeEnd - writeStart);
+            };
+
+            ByteBuffer tmpBuf = ByteBuffer.allocate(mem.pageSize());
+
+            tmpBuf.order(ByteOrder.nativeOrder());
 
             for (FullPageId fullId : pages) {
                 if (pageIds.contains(fullId)) {
                     long cpStart = System.nanoTime();
 
-                    Integer tag = mem.getForCheckpoint(fullId, tmpBuf, null);
-
-                    if (tag == null)
-                        continue;
+                    mem.checkpointWritePage(fullId, tmpBuf, pageStoreWriter, null);
 
                     long cpEnd = System.nanoTime();
 
                     cp += cpEnd - cpStart;
-                    tmpBuf.rewind();
-
-                    for (int j = PageIO.COMMON_HEADER_END; j < mem.pageSize(); j += 4)
-                        assertEquals(j + (int)fullId.pageId(), tmpBuf.getInt(j));
-
-                    tmpBuf.rewind();
-
-                    long writeStart = System.nanoTime();
-
-                    storeMgr.write(cacheId, fullId.pageId(), tmpBuf, tag);
-
-                    long writeEnd = System.nanoTime();
-
-                    write += writeEnd - writeStart;
-
-                    tmpBuf.rewind();
                 }
             }
 
@@ -370,7 +369,7 @@ public class IgnitePdsRecoveryAfterFileCorruptionTest extends GridCommonAbstract
             long end = System.currentTimeMillis();
 
             info("Written pages in " + (end - begin) + "ms, copy took " + (cp / 1_000_000) + "ms, " +
-                "write took " + (write / 1_000_000) + "ms, sync took " + (end - syncStart) + "ms");
+                "write took " + (write.get() / 1_000_000) + "ms, sync took " + (end - syncStart) + "ms");
         }
         finally {
             info("Finishing checkpoint...");

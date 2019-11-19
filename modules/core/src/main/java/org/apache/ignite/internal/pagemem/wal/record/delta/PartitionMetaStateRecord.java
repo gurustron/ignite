@@ -19,7 +19,7 @@ package org.apache.ignite.internal.pagemem.wal.record.delta;
 
 import org.apache.ignite.internal.pagemem.wal.record.WALRecord;
 import org.apache.ignite.internal.pagemem.wal.record.WalRecordCacheGroupAware;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionState;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.util.typedef.internal.S;
 
 /**
@@ -35,12 +35,14 @@ public class PartitionMetaStateRecord extends WALRecord implements WalRecordCach
     /** Partition id. */
     private final int partId;
 
-    /** Update counter. */
+    /** @deprecated Update counter. */
     private final long updateCounter;
 
     /**
      * @param grpId Cache group ID.
-     * @param state Page ID.
+     * @param partId Partition ID.
+     * @param state State.
+     * @param updateCounter Update counter.
      */
     public PartitionMetaStateRecord(int grpId, int partId, GridDhtPartitionState state, long updateCounter) {
         this.grpId = grpId;
@@ -74,7 +76,7 @@ public class PartitionMetaStateRecord extends WALRecord implements WalRecordCach
     }
 
     /**
-     *
+     * @return Rollback counter.
      */
     public long updateCounter() {
         return updateCounter;
