@@ -20,6 +20,7 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
     using System.Diagnostics;
+    using System.Linq;
     using Apache.Ignite.Core.Binary;
     using Apache.Ignite.Core.Cache.Query;
     using Apache.Ignite.Core.Impl.Binary;
@@ -33,6 +34,11 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
     {
         /** Ignite. */
         private readonly IgniteClient _ignite;
+
+        private readonly long _cursorId;
+
+        /** */
+        private IList<IQueryCursorFieldMetadata> _fieldsMeta;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ClientQueryCursor{TK, TV}" /> class.
@@ -60,6 +66,7 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
         {
             Debug.Assert(columns != null);
             _ignite = ignite;
+            _cursorId = cursorId;
 
             FieldNames = new ReadOnlyCollection<string>(columns);
         }
@@ -67,7 +74,27 @@ namespace Apache.Ignite.Core.Impl.Client.Cache.Query
         /** <inheritdoc /> */
         public IList<string> FieldNames { get; private set; }
 
-        public IList<IQueryCursorFieldMetadata> FieldsMetadata { get; private set; }
+        /** <inheritdoc /> */
+        public IList<IQueryCursorFieldMetadata> FieldsMetadata
+        {
+            get
+            {
+                if (_fieldsMeta == null)
+                {
+                    var metadata = _ignite.Socket.DoOutInOp(
+                        ClientOp.QuerySqlFieldsGetMeta,
+                        ctx => ctx.Stream.WriteLong(_cursorId),
+                        ctx => ctx.Reader.ReadCollectionRaw(stream =>
+                            new QueryCursorFieldMetadataImpl(stream) as IQueryCursorFieldMetadata)
+                    );
+
+                    _fieldsMeta = new ReadOnlyCollection<IQueryCursorFieldMetadata>(
+                        metadata as List<IQueryCursorFieldMetadata> ?? metadata.ToList());
+                }
+
+                return _fieldsMeta;
+            }
+        }
 
         /// <summary>
         /// Reads the columns.

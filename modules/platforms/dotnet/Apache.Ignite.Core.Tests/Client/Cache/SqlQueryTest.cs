@@ -100,6 +100,10 @@ namespace Apache.Ignite.Core.Tests.Client.Cache
             // All items.
             var qry = new SqlFieldsQuery("select Id from Person");
             var cursor = cache.Query(qry);
+            
+            // var list = cursor.GetAll();
+            var queryCursorFieldMetadatas = cursor.FieldsMetadata;
+            
             CollectionAssert.AreEquivalent(Enumerable.Range(1, Count), cursor.Select(x => (int) x[0]));
             Assert.AreEqual("ID", cursor.FieldNames.Single());
 

@@ -17,54 +17,45 @@
 
 package org.apache.ignite.internal.processors.platform.client.cache;
 
-import org.apache.ignite.cache.query.FieldsQueryCursor;
 import org.apache.ignite.internal.binary.BinaryRawWriterEx;
-import org.apache.ignite.internal.processors.cache.query.QueryCursorEx;
 import org.apache.ignite.internal.processors.platform.client.ClientConnectionContext;
+import org.apache.ignite.internal.processors.platform.client.ClientResponse;
 import org.apache.ignite.internal.processors.query.GridQueryFieldMetadata;
 
 import java.util.List;
 
 /**
- * Query cursor holder.
-  */
-class ClientCacheFieldsQueryCursor extends ClientCacheQueryCursor<List> {
-    /** Column count. */
-    private final int columnCount;
-
+ * Query cursor next page response.
+ */
+class ClientCacheSqlFieldsQueryMetaResponse extends ClientResponse {
     /** Cursor. */
-    private FieldsQueryCursor<List> cursor;
+    private final ClientCacheFieldsQueryCursor cursor;
 
     /**
      * Ctor.
      *
-     * @param cursor   Cursor.
-     * @param pageSize Page size.
-     * @param ctx      Context.
+     * @param requestId Request id.
+     * @param cursor Cursor.
      */
-    ClientCacheFieldsQueryCursor(FieldsQueryCursor<List> cursor, int pageSize, ClientConnectionContext ctx) {
-        super(cursor, pageSize, ctx);
+    ClientCacheSqlFieldsQueryMetaResponse(long requestId, ClientCacheFieldsQueryCursor cursor) {
+        super(requestId);
 
-        columnCount = cursor.getColumnsCount();
+        assert cursor != null;
+
         this.cursor = cursor;
     }
 
     /** {@inheritDoc} */
-    @Override void writeEntry(BinaryRawWriterEx writer, List e) {
-        assert e.size() == columnCount;
+    @Override public void encode(ClientConnectionContext ctx, BinaryRawWriterEx writer) {
+        super.encode(ctx, writer);
 
-        for (Object o : e)
-            writer.writeObjectDetached(o);
-    }
+        List<GridQueryFieldMetadata> metadatas = cursor.fieldsMeta();
 
-    /**
-     * @return Query metadata.
-     */
-    public List<GridQueryFieldMetadata> fieldsMeta() {
-        assert cursor instanceof QueryCursorEx;
+        writer.writeInt(metadatas.size());
 
-        QueryCursorEx cursorExtended = (QueryCursorEx) cursor;
-
-        return cursorExtended.fieldsMeta();
+        for (GridQueryFieldMetadata metadata : metadatas) {
+            writer.writeString(metadata.fieldName());
+            writer.writeString(metadata.fieldTypeName());
+        }
     }
 }

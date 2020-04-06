@@ -33,41 +33,7 @@ import org.apache.ignite.internal.processors.platform.client.binary.ClientBinary
 import org.apache.ignite.internal.processors.platform.client.binary.ClientBinaryTypeNameGetRequest;
 import org.apache.ignite.internal.processors.platform.client.binary.ClientBinaryTypeNamePutRequest;
 import org.apache.ignite.internal.processors.platform.client.binary.ClientBinaryTypePutRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheClearKeyRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheClearKeysRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheClearRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheContainsKeyRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheContainsKeysRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheCreateWithConfigurationRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheCreateWithNameRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheDestroyRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetAllRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetAndPutIfAbsentRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetAndPutRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetAndRemoveRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetAndReplaceRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetConfigurationRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetNamesRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetOrCreateWithConfigurationRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetOrCreateWithNameRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheGetSizeRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheLocalPeekRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheNodePartitionsRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCachePartitionsRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCachePutAllRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCachePutIfAbsentRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCachePutRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheQueryNextPageRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheRemoveAllRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheRemoveIfEqualsRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheRemoveKeyRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheRemoveKeysRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheReplaceIfEqualsRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheReplaceRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheScanQueryRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheSqlFieldsQueryRequest;
-import org.apache.ignite.internal.processors.platform.client.cache.ClientCacheSqlQueryRequest;
+import org.apache.ignite.internal.processors.platform.client.cache.*;
 import org.apache.ignite.internal.processors.platform.client.tx.ClientTxEndRequest;
 import org.apache.ignite.internal.processors.platform.client.tx.ClientTxStartRequest;
 import org.apache.ignite.internal.processors.platform.client.cluster.ClientClusterChangeStateRequest;
@@ -200,6 +166,9 @@ public class ClientMessageParser implements ClientListenerMessageParser {
 
     /** */
     private static final short OP_QUERY_SQL_FIELDS_CURSOR_GET_PAGE = 2005;
+
+    /** */
+    private static final short OP_QUERY_SQL_FIELDS_GET_META = 2006;
 
     /* Binary metadata operations. */
     /** */
@@ -412,6 +381,9 @@ public class ClientMessageParser implements ClientListenerMessageParser {
 
             case OP_QUERY_SQL_FIELDS_CURSOR_GET_PAGE:
                 return new ClientCacheQueryNextPageRequest(reader);
+
+            case OP_QUERY_SQL_FIELDS_GET_META: // TODO: SEST
+                return new ClientCacheSqlFieldsQueryMetaRequest(reader);
 
             case OP_TX_START:
                 return new ClientTxStartRequest(reader);

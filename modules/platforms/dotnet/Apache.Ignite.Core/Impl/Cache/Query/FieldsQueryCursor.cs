@@ -101,8 +101,8 @@ namespace Apache.Ignite.Core.Impl.Cache.Query
                 {
                     var metadata = Target.OutStream(
                         OpGetFieldsMeta,
-                        reader => reader.ReadCollectionRaw(stream =>
-                            new QueryCursorFieldMetadataImpl(stream) as IQueryCursorFieldMetadata));
+                        reader => reader.ReadCollectionRaw(innerReader =>
+                            new QueryCursorFieldMetadataImpl(innerReader) as IQueryCursorFieldMetadata));
 
                     _fieldsMeta = new ReadOnlyCollection<IQueryCursorFieldMetadata>(
                         metadata as List<IQueryCursorFieldMetadata> ?? metadata.ToList());
